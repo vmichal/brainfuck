@@ -89,7 +89,7 @@ namespace bf {
 			int propagated_consts = 0;
 
 			int const cell_count = execution::emulator.memory_size();
-			std::vector<bool> field_consts{ cell_count, true };
+			std::vector<bool> field_consts(cell_count, true );
 
 			execution::cpu_emulator emulator; //we set up local emulator to preserve the global state
 			sizeof(emulator);
@@ -102,6 +102,8 @@ namespace bf {
 
 			std::cout << "Const propagation ended, propagated " << propagated_consts << " constant"
 				<< cli::print_plural(propagated_consts) << ".\n";
+			assert(false); //TODO RIP
+			return {};
 		}
 	}
 

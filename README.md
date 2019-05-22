@@ -11,7 +11,7 @@ This toolchain is fully compliant with the Brainfuck language's specification at
 		1) Preparation for releasing as open source
 		2) High code portability
 		3) Modern maintainable code following with good principles and guidelines in mind
-		4) Good and consistent coding style
+		4) Flawless and elegant code structure as well as a consistent coding style
 		5) Avoiding code coupling
 	
 
