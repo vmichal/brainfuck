@@ -207,7 +207,7 @@ namespace bf {
 			else if (arg.compare("full") == 0)
 				return helper::print_syntax_errors(true);
 			else if (arg.compare("count") == 0) {
-				if (unsigned const count = last_compilation::errors().size(); count == 1)
+				if (std::size_t const count = last_compilation::errors().size(); count == 1)
 					std::cout << "There has been one error.\n";
 				else
 					std::cout << "There have been " << last_compilation::errors().size() << " errors.\n";

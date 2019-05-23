@@ -191,12 +191,12 @@ namespace bf::execution {
 		int executed_instructions_counter() { return executed_instructions_counter_; }
 		instruction* instructions_begin() { return instructions_.data(); }
 		instruction* instructions_end() { return instructions_.data() + instructions_.size(); }
-		int instructions_size() { return instructions_.size(); }
+		int instructions_size() { return static_cast<int>(instructions_.size()); }
 
 
 
 
-		constexpr int memory_size() const { return memory_.size(); }
+		constexpr int memory_size() const { return static_cast<int>(memory_.size()); }
 		//returns a pointer to the first cell in data memory. Must be untyped due to raw byte manipulations done by some commands
 		void* memory_begin() { return memory_.data(); }
 		void const* memory_begin() const { return memory_.data(); }
