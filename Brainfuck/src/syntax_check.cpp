@@ -15,17 +15,18 @@
 namespace bf {
 
 	bool instruction::is_foldable() const {
-		static std::unordered_set<instruction_type> foldable{
-			instruction_type::dec,
+		static std::unordered_set<instruction_type> const foldable {
 			instruction_type::inc,
-			instruction_type::right,
-			instruction_type::left
+			instruction_type::dec,
+			instruction_type::left,
+			instruction_type::right
 		};
 		return foldable.count(type_);
 	}
 
 	std::ostream& operator<<(std::ostream& str, instruction_type t) {
 		static std::unordered_map<instruction_type, const char*> strings = {
+			{instruction_type::nop,                  "nop"},
 			{instruction_type::inc,					 "inc"},
 			{instruction_type::dec,					 "dec"},
 			{instruction_type::left,			    "left"},
@@ -34,7 +35,8 @@ namespace bf {
 			{instruction_type::loop_end,		"loop_end"},
 			{instruction_type::in,					 "in" },
 			{instruction_type::out,					 "out"},
-			{instruction_type::breakpoint,    "breakpoint"}
+			{instruction_type::breakpoint,    "breakpoint"},
+			{instruction_type::load_const,     "load_const"}
 		};
 		assert(strings.count(t));
 

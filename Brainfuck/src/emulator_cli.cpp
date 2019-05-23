@@ -139,20 +139,20 @@ namespace bf::execution {
 			int do_perform_steps(int step_count) {
 				assert(step_count > 0);
 				int code = 0;
-
+				bool const saved_interrupt_state = emulator.suppress_stop_interrupt(),
+					saved_step_state = emulator.single_step();
 				emulator.single_step() = true; //set the single_step flag to make each call to continue_execution run just one instruction
-				emulator.suppress_stop_notification() = true; //prevent the emulator from fireing "stop" command
+				emulator.suppress_stop_interrupt() = true; //prevent the emulator from fireing "stop" command
 				for (; step_count > 1; --step_count) //run up to step_count times until the call returns non zero value
 					if ((code = step_and_continue_helper::continue_execution())) {
 						cli::execute_command("stop", false);
 						break;
 					}
-				emulator.suppress_stop_notification() = false;
-				if (!code && step_count) {
+				emulator.suppress_stop_interrupt() = saved_interrupt_state;
+				if (!code && step_count)
 					if (code = step_and_continue_helper::continue_execution(); code == 0)
 						--step_count;
-				}
-				emulator.single_step() = false; //reset normal run behaviour
+				emulator.single_step() = saved_step_state; //reset normal run behaviour
 				if (step_count) //if we had to break out, we notify the user that some stuff happened
 					std::cerr << "CPU has rejected further attempts to control it. Remaining " << step_count << " step"
 					<< cli::print_plural(step_count) << " had not been performed.\n";
@@ -202,8 +202,8 @@ namespace bf::execution {
 			/*Helper function printing the paths to which emulated program's iostreams are redirected*/
 			int print_iostreams_state() {
 				std::cout << "Current state of iostreams available to the emulated program:\n"
-					"STDIN  > " << (emulated_program_stdin == &std::cin ? "debugger's stdin" : stdin_path.string())
-					<< "\nSTDOUT > " << (emulated_program_stdout == &std::cout ? "debugger's stdout" : stdout_path.string()) << '\n';
+					"STDIN  > " << (emulator.emulated_program_stdin() == &std::cin ? "debugger's stdin" : stdin_path.string())
+					<< "\nSTDOUT > " << (emulator.emulated_program_stdout() == &std::cout ? "debugger's stdout" : stdout_path.string()) << '\n';
 				return 0;
 			}
 
@@ -225,16 +225,16 @@ namespace bf::execution {
 			int redirect_stream(data_stream str, std::string_view const new_stream_name) {
 				assert(str != data_stream::none); //sanity check
 				if (str == data_stream::out)
-					emulated_program_stdout->flush();
+					emulator.emulated_program_stdout()->flush();
 
 				if (new_stream_name.compare("std") == 0) //we will use standard stream
 					switch (str) {
 					case data_stream::in:
-						emulated_program_stdin = &std::cin;
+						emulator.emulated_program_stdin() = &std::cin;
 						std::cout << "Successfully redirected input to stdin.\n";
 						return 0;
 					case data_stream::out:
-						emulated_program_stdout = &std::cout;
+						emulator.emulated_program_stdout() = &std::cout;
 						std::cout << "Successfully redirected output to stdout.\n";
 						return 0;
 					}
@@ -257,14 +257,14 @@ namespace bf::execution {
 				switch (str) {
 				case data_stream::in:
 					file_in = std::ifstream{ new_stream };
-					emulated_program_stdin = &file_in;
+					emulator.emulated_program_stdin() = &file_in;
 					std::cout << "Successfully redirected input to " << new_stream << '\n';
 					stdin_path = std::move(new_stream);
 					break;
 				case data_stream::out:
 					file_out = std::ofstream{ new_stream };
 					file_out.rdbuf()->pubsetbuf(nullptr, 0); //enable unbuffered output
-					emulated_program_stdout = &file_out;
+					emulator.emulated_program_stdout() = &file_out;
 					std::cout << "Successfully redirected output to " << new_stream << '\n';
 					stdout_path = std::move(new_stream);
 					break;

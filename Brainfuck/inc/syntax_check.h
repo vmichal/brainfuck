@@ -9,7 +9,8 @@ namespace bf {
 
 	enum class instruction_type : std::uint32_t {
 		invalid = static_cast<std::uint32_t>(-1),
-		inc = 0,
+		nop = 0,
+		inc,
 		dec,
 		left,
 		right,
@@ -21,7 +22,7 @@ namespace bf {
 		out,
 
 		//pseudo instructions added by the optimizer:
-		set_const,
+		load_const,
 
 
 
