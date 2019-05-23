@@ -3,6 +3,8 @@
 #include "compiler.h"
 #include "emulator.h"
 #include <iostream>
+#include <algorithm>
+#include <stack>
 
 namespace bf {
 
@@ -11,9 +13,11 @@ namespace bf {
 		opt_level_t get_opt_by_name(std::string_view const optimization_name) {
 			using namespace std::string_view_literals;
 			static std::unordered_map<std::string_view, opt_level_t> const optimization_levels{
-				{"op_folding"sv, op_folding}
+				{"op_folding"sv, op_folding},
+				{"const_propagation"sv, const_propagation}
 			};
-			assert(optimization_levels.count(optimization_name));
+			if (optimization_levels.count(optimization_name) == 0)
+				return none;
 			return optimization_levels.at(optimization_name);
 		}
 
@@ -58,12 +62,13 @@ namespace bf {
 			for (auto iter = old_tree.begin(), end = old_tree.end(); iter != end;) {
 				if (!iter->is_foldable()) {
 					//if current instruction is jump, IO or breakpoint, nothing can be folded
-					new_tree.add_instruction(iter->type_, 0, iter->source_offset_);
+					new_tree.add_instruction(*iter);
 					++iter;
 					continue;
 				}
 				auto const current = iter;
-				while (++iter != end && iter->type_ == current->type_); //while instructions have same type, advance iterator 
+				//while instructions have same type, advance iterator
+				iter = std::find_if(++iter, end, [&current](instruction const& i) {return i.type_ != current->type_; });
 				int const distance = static_cast<int>(std::distance(current, iter)); //number of instruction to be folded
 				if (distance > 1) {//if we are folding, print message
 					std::cout << "Folding " << distance << ' ' << current->type_ << " instructions ("
@@ -85,25 +90,69 @@ namespace bf {
 		syntax_tree propagate_consts(syntax_tree const old_tree) {
 			std::cout << "Propagating const...\n";
 
-			syntax_tree new_tree;
-			int propagated_consts = 0;
-
+			using cell_t = execution::cpu_emulator::memory_cell_t;
 			int const cell_count = execution::emulator.memory_size();
-			std::vector<bool> field_consts(cell_count, true );
 
-			execution::cpu_emulator emulator; //we set up local emulator to preserve the global state
-			sizeof(emulator);
+			execution::cpu_emulator speculative_emulator; // we set up local emulator to preserve the global state
 
+			//first we need to find out, how much code is executed independently on IO operations. This part will be executed by the local emulator
+			{
+				//traverse the code pushing opened loops on the stack until an IO operation is encountered
+				std::stack<std::vector<instruction>::const_iterator> opened_loops;
+				auto iter = old_tree.begin();
+				for (auto end = old_tree.end(); iter != end && !iter->is_io(); ++iter)
+					switch (iter->type_) {
+					case instruction_type::loop_begin:
+						opened_loops.push(iter);
+						break;
+					case instruction_type::loop_end:
+						assert(!opened_loops.empty());
+						opened_loops.pop();
+						break;
+					}
+				//iterator past the last guaranteed instruction
+				auto const speculative_begin = [iter, &opened_loops]() {
+					if (opened_loops.empty()) //if we're not in loop, then iter points to some IO
+						return iter;
+					for (int redundant_count = opened_loops.size() - 1; redundant_count; --redundant_count)
+						opened_loops.pop(); //otherwise find the outermost opened loop and take its opening brace
+					return opened_loops.top();
+				}();
+				//construct tree with new source code and flash it into the local emulator
+				syntax_tree speculative_execution_code;
+				speculative_execution_code.reserve(std::distance(old_tree.begin(), speculative_begin));
+				std::copy(old_tree.begin(), speculative_begin, std::back_inserter(speculative_execution_code));
 
+				speculative_emulator.flash_program(speculative_execution_code);
+			}
+			speculative_emulator.suppress_stop_interrupt() = true;
+			speculative_emulator.do_execute(); //execute the guaranteed code
 
+			syntax_tree new_tree;
+			new_tree.reserve(old_tree.size() + cell_count * 2 + 1);
+			//save the state of emulator's memory in the form of load_const instructions
+			for (cell_t * iter = static_cast<cell_t*>(speculative_emulator.memory_begin()), *end = static_cast<cell_t*>(speculative_emulator.memory_end());;) {
+				cell_t *next = std::find_if(iter, end, [](cell_t cell) {return cell != 0; }); //find the next nonzero cell
+				if (next == end) { //if we run out of cells, move the CPR to the desired position within the memory as if the code had been run normally
+					new_tree.add_instruction(instruction_type::left,
+						std::distance(static_cast<cell_t*>(speculative_emulator.memory_begin()), iter) - speculative_emulator.cell_pointer_offset(), 0);
+					break;
+				}
+				//emit instructions to traverse emulator's memory and load constants
+				new_tree.add_instruction(instruction_type::right, std::distance(iter, next) + 1, 0);
+				new_tree.add_instruction(instruction_type::load_const, *next, 0);
+				iter = std::next(next);
+			}
+			--new_tree.front().argument_; //decrese the number of cells the CPR moves due to the first instruction
 
+			for (std::size_t i = speculative_emulator.program_counter(); i < old_tree.size(); ++i)
+				new_tree.add_instruction(old_tree[i]); //copy the rest of executable code
+			new_tree.relocate_jump_targets();
 
-
-
-			std::cout << "Const propagation ended, propagated " << propagated_consts << " constant"
-				<< cli::print_plural(propagated_consts) << ".\n";
-			assert(false); //TODO RIP
-			return {};
+			std::cout << "In summary execution of " << speculative_emulator.executed_instructions_counter() << " instruction"
+				<< cli::print_plural(speculative_emulator.executed_instructions_counter())
+				<< " will be prevented by the means of const propagation.\n";
+			return new_tree;
 		}
 	}
 

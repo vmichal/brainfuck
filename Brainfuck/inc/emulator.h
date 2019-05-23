@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <ostream>
+#include <iostream>
 
 namespace bf::execution {
 
@@ -15,10 +16,10 @@ namespace bf::execution {
 		single_step = 1 << 1,
 		breakpoint_hit = 1 << 2,
 		os_interrupt = 1 << 3,
-		suppress_stop_notification = 1 << 4
+		suppress_stop_interrupt = 1 << 4
 	};
 
-	/*A reference to CPU flag. Allows writing and reading of a single flag determined by the template parameter*/
+	/*A reference to a CPU flag. Allows writing and reading of a single flag determined by the template parameter*/
 	template<flag BIT_MASK>
 	class flag_reference {
 		static constexpr flag flag_ = BIT_MASK;
@@ -84,7 +85,7 @@ namespace bf::execution {
 			return value_;
 		}
 
-		flag_reference<flag::suppress_stop_notification> volatile suppress_stop_notification() volatile {
+		flag_reference<flag::suppress_stop_interrupt> volatile suppress_stop_interrupt() volatile {
 			return value_;
 		}
 
@@ -130,12 +131,20 @@ namespace bf::execution {
 	private:
 
 		syntax_tree instructions_;
-		int program_counter_ = 0;
+		int program_counter_ = 0, executed_instructions_counter_ = 0;
 		flags_register volatile flags_register_;
 		memory<64, memory_cell_t> memory_;
 		memory_cell_t* cell_pointer_reg_ = memory_.data();
 		execution_state state_ = execution_state::not_started;
 
+		std::istream * emulated_program_stdin_ = &std::cin;
+		std::ostream * emulated_program_stdout_ = &std::cout;
+
+	public:
+		std::istream*& emulated_program_stdin() { return emulated_program_stdin_; }
+		std::ostream*& emulated_program_stdout() { return emulated_program_stdout_; }
+
+	private:
 		/*Handler executed if a breakpoint instruction is hit. First sets the breakpoint_hit flag to prevent further execution.
 		Then consults the collection of defined breakpoints searching for breakpoints with matching address, determining whether
 		they have or have not been hit with regards to their ignore count and condition. If breakpoints shall be ignored, clears the
@@ -171,7 +180,7 @@ namespace bf::execution {
 		flag_reference<flag::halt> halt();
 		flag_reference<flag::single_step> single_step();
 		flag_reference<flag::os_interrupt> os_interrupt();
-		flag_reference<flag::suppress_stop_notification> suppress_stop_notification();
+		flag_reference<flag::suppress_stop_interrupt> suppress_stop_interrupt();
 
 		bool has_program() const { return instructions_.size(); }
 
@@ -179,6 +188,7 @@ namespace bf::execution {
 
 
 		int program_counter() { return program_counter_; }
+		int executed_instructions_counter() { return executed_instructions_counter_; }
 		instruction* instructions_begin() { return instructions_.data(); }
 		instruction* instructions_end() { return instructions_.data() + instructions_.size(); }
 		int instructions_size() { return instructions_.size(); }
@@ -188,25 +198,23 @@ namespace bf::execution {
 
 		constexpr int memory_size() const { return memory_.size(); }
 		//returns a pointer to the first cell in data memory. Must be untyped due to raw byte manipulations done by some commands
-		void* memory_begin() const{ return memory_.data(); }
+		void* memory_begin() { return memory_.data(); }
+		void const* memory_begin() const { return memory_.data(); }
 		//returns an address of the first element located past the memory's boundaries. Must be untyped due to raw byte manipulations done by some commands
-		void* memory_end() const { return memory_.data() + memory_.size(); }
+		void* memory_end() { return memory_.data() + memory_.size(); }
+		void const* memory_end() const { return memory_.data() + memory_.size(); }
 		//Returns the value of CPU's CPR. Must be untyped due to raw byte manipulations done by some commands
-		void* cell_pointer() const { return cell_pointer_reg_; }
+		void* cell_pointer() { return cell_pointer_reg_; }
+		void const* cell_pointer() const { return cell_pointer_reg_; }
 		//returns an offset of cpr from the memory's bounds
-		int cell_pointer_offset() const { return static_cast<int>(std::distance(static_cast<unsigned char*>(memory_begin()), static_cast<unsigned char*>(cell_pointer()))); }
+		int cell_pointer_offset() const { return static_cast<int>(std::distance(static_cast<unsigned char const*>(memory_begin()), static_cast<unsigned char const*>(cell_pointer()))); }
 
 
 
 	};
 
-	//pointer to stdin for CPU. Is either &std::cin or disk file if input is redirected
-	extern std::istream* emulated_program_stdin;  
-	//pointer to stdout for CPU. Is either &std::cout or disk file if output is redirected
-	extern std::ostream* emulated_program_stdout; 
 	//global CPU instance 
 	extern cpu_emulator emulator;
-	//Note: It is important to preserve this order of initialization, as streams have to be initialized before the CPU is constructed
 
 
 

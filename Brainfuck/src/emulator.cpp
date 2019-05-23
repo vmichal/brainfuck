@@ -7,10 +7,6 @@
 
 namespace bf::execution {
 
-	//This order of initialization has to be preserved, because the cpu's constructor calls reset, which accesses these pointers 
-	std::istream* emulated_program_stdin = &std::cin;
-	std::ostream* emulated_program_stdout = &std::cout;
-
 	cpu_emulator emulator;
 
 	void cpu_emulator::breakpoint_interrupt_handler() {
@@ -41,22 +37,22 @@ namespace bf::execution {
 		return flags_register_.os_interrupt();
 	}
 
-	flag_reference<flag::suppress_stop_notification> cpu_emulator::suppress_stop_notification() {
-		return flags_register_.suppress_stop_notification();
+	flag_reference<flag::suppress_stop_interrupt> cpu_emulator::suppress_stop_interrupt() {
+		return flags_register_.suppress_stop_interrupt();
 	}
 
 	void cpu_emulator::reset() {
 		program_counter_ = 0;
+		executed_instructions_counter_ = 0;
 		memory_.reset();
 		flags_register_.reset();
 		cell_pointer_reg_ = memory_.data();
 		state_ = execution_state::not_started;
-		//i most likely wanna have my stream non-null
-		assert(emulated_program_stdin);
-		assert(emulated_program_stdout);
-		if (emulated_program_stdin != &std::cin) {
-			emulated_program_stdin->clear(); //if a disk file is used as CPU's input, reset it
-			emulated_program_stdin->seekg(0);
+		assert(emulated_program_stdin_);
+		assert(emulated_program_stdout_);
+		if (emulated_program_stdin_ != &std::cin) {
+			emulated_program_stdin_->clear(); //if a disk file is used as CPU's input, reset it
+			emulated_program_stdin_->seekg(0);
 		}
 	}
 
@@ -64,19 +60,22 @@ namespace bf::execution {
 		assert(count > 0);
 		cell_pointer_reg_ -= count;
 		//TODO change to while
-		if (cell_pointer_reg_ < memory_begin())  //if the value exceeds memory's bounds
+		while (cell_pointer_reg_ < memory_begin())  //if the value exceeds memory's bounds
 			cell_pointer_reg_ += memory_size();
 	}
 
 	void cpu_emulator::right(int count) {
 		assert(count > 0);
 		cell_pointer_reg_ += count;
-		if (cell_pointer_reg_ >= memory_end())   //if the value exceeds memory's bounds
+		while (cell_pointer_reg_ >= memory_end())   //if the value exceeds memory's bounds
 			cell_pointer_reg_ -= memory_size();
 	}
 
 	void cpu_emulator::do_execute(instruction const& instruction) {
+		++executed_instructions_counter_;
 		switch (instruction.type_) {
+		case instruction_type::nop: //no-op
+			break;
 		case instruction_type::inc: //increase value of cell under the pointer
 			*cell_pointer_reg_ += instruction.argument_;
 			break;
@@ -99,7 +98,7 @@ namespace bf::execution {
 			//the next executed instruction is the one behind opening brace
 			break;
 		case instruction_type::in: //read char from stdin
-			if (int const read = emulated_program_stdin->get(); read == std::char_traits<char>::eof()) {
+			if (int const read = emulated_program_stdin_->get(); read == std::char_traits<char>::eof()) {
 				std::cout << "\nEnd of input stream hit.\n";
 				flags_register_.os_interrupt() = true;
 			}
@@ -107,26 +106,33 @@ namespace bf::execution {
 				*cell_pointer_reg_ = static_cast<memory_cell_t>(read);
 			break;
 		case instruction_type::out: //print char to stdout
-			emulated_program_stdout->put(static_cast<char>(*cell_pointer_reg_));
+			emulated_program_stdout_->put(static_cast<char>(*cell_pointer_reg_));
 			break;
 		case instruction_type::breakpoint: //pause the execution due to a breakpoint
+			--executed_instructions_counter_;
 			flags_register_.breakpoint_hit() = true;
 			break;
+		case instruction_type::load_const:
+			*cell_pointer_reg_ = instruction.argument_;
+			break;
 		default: //die painfully
+			--executed_instructions_counter_;
 			std::cerr << "Unknown instruction " << instruction.type_ << ". Halting.\n";
-			halt();
+			halt() = true;
 		}
 
 	}
 
 	void cpu_emulator::execution_stops_callback() {
-		emulated_program_stdout->flush();
-		state_ = execution_state::interrupted;
+		emulated_program_stdout_->flush();
+		execution_state new_state = execution_state::interrupted;
 		if (program_counter_ == instructions_.size()) {
 			std::cout << "\nExecution has finished.\n";
-			state_ = execution_state::finished; //set state to finished. Memory may still be inspected, but PC is out of bounds
+			new_state = execution_state::finished; //set state to finished. Memory may still be inspected, but PC is out of bounds
 		}
-		if (!flags_register_.suppress_stop_notification())
+		if (state_ != execution_state::halted)
+			state_ = new_state;
+		if (!flags_register_.suppress_stop_interrupt())
 			cli::execute_command("stop", false);
 	}
 
@@ -158,7 +164,7 @@ namespace bf::execution {
 			}
 			assert(program_counter_ >= 0); //safety and sanity check
 			if (flags_register_.os_interrupt()) {
-				std::cout << "\nOperating system raised interrupt signal!\n";
+				std::cout << "\nOperating system raised an interrupt signal!\n";
 				break;
 			}
 			if (flags_register_.single_step() || flags_register_.halt())

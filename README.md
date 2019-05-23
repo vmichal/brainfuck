@@ -90,18 +90,18 @@ This toolchain is fully compliant with the Brainfuck language's specification at
 
 		++++++++++          //Set the first cell to 10
 		[-					//loop 10 times setting the values of following cells in the process
-		>+++++++
-		>++++++++++
-		>+++++++++++
-		>+++++++++++
-		>+++++++++++
-		>+++
-		>++++++++++++
-		>+++++++++++
-		>+++++++++++
-		>+++++++++++
-		>++++++++++
-		>+++
+		>+++++++			H
+		>++++++++++			e	
+		>+++++++++++		l
+		>+++++++++++		l
+		>+++++++++++		o
+		>+++				 
+		>++++++++++++		w
+		>+++++++++++		o
+		>+++++++++++		r
+		>+++++++++++		l
+		>++++++++++			d
+		>+++				!
 		<<<<<<<<<<<<          //Return to the loop variable
 		]
 		>++					//set the cells 1 to 12 to the right values of ASCII chars "Hello world!"
