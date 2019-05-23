@@ -14,8 +14,10 @@ namespace bf {
 			using namespace std::string_view_literals;
 			static std::unordered_map<std::string_view, optimization_t> const optimization_levels{
 				{"op_folding"sv, op_folding},
+				{"dead_code_elimination"sv, dead_code_elimination},
 				{"const_propagation"sv, const_propagation}
 			};
+
 			if (optimization_levels.count(optimization_name) == 0)
 				return none;
 			return optimization_levels.at(optimization_name);
@@ -51,7 +53,7 @@ namespace bf {
 		operations which do the same. New tree of optimized code is returned.
 		Traverses the given source code instruction by instruction, if there are multiple identical instructions
 		next to each other, folds them to one.*/
-		syntax_tree fold_operations(syntax_tree const old_tree) {
+		syntax_tree fold_operations(syntax_tree const& old_tree) {
 			std::cout << "Folding operations...\n";
 
 			syntax_tree new_tree;
@@ -84,52 +86,55 @@ namespace bf {
 			return new_tree;
 		}
 
-		/*Function performing optimizations on passed syntax_tree by propagting constants wherever possible.
-		New tree of optimized code is returned. Traverses the given source code instruction by instruction,
-		speculatively executes and if the engine finds out that some value is a constant, eliminates all additional operations.*/
-		syntax_tree propagate_consts(syntax_tree const old_tree) {
-			std::cout << "Propagating const...\n";
+		/*First we need to find out, how much code is executed independently on IO operations. This part will be executed by the local emulator.
+		This function does exactly that - takes source code for the program and decides, which parts shall be executed at compile-time.*/
+		syntax_tree prepare_speculative_execution_code(syntax_tree const& old_tree) {
 
-			using cell_t = execution::cpu_emulator::memory_cell_t;
-			int const cell_count = execution::emulator.memory_size();
+			//the last instuction that could possibly be executed by the speculative execution
+			auto const first_io_operation = std::find_if(old_tree.begin(), old_tree.end(), [](instruction const& i) { return i.is_io(); });
+			if (first_io_operation == old_tree.end())
+				return old_tree; //there is no IO in this program - it can be calculated at compile-time
 
-			execution::cpu_emulator speculative_emulator; // we set up local emulator to preserve the global state
+			//traverse the code pushing opened loops on the stack until an IO operation is encountered
+			std::stack<std::vector<instruction>::const_iterator> opened_loops;
+			for (auto iter = old_tree.begin(); iter != first_io_operation; ++iter)
+				switch (iter->type_) {
+				case instruction_type::loop_begin:
+					opened_loops.push(iter);
+					break;
+				case instruction_type::loop_end:
+					assert(!opened_loops.empty());
+					opened_loops.pop();
+					break;
+				}
 
-			//first we need to find out, how much code is executed independently on IO operations. This part will be executed by the local emulator
-			{
-				//traverse the code pushing opened loops on the stack until an IO operation is encountered
-				std::stack<std::vector<instruction>::const_iterator> opened_loops;
-				auto iter = old_tree.begin();
-				for (auto end = old_tree.end(); iter != end && !iter->is_io(); ++iter)
-					switch (iter->type_) {
-					case instruction_type::loop_begin:
-						opened_loops.push(iter);
-						break;
-					case instruction_type::loop_end:
-						assert(!opened_loops.empty());
-						opened_loops.pop();
-						break;
-					}
-				//iterator past the last guaranteed instruction
-				auto const speculative_begin = [iter, &opened_loops]() {
-					if (opened_loops.empty()) //if we're not in loop, then iter points to some IO
-						return iter;
-					for (int redundant_count = opened_loops.size() - 1; redundant_count; --redundant_count)
-						opened_loops.pop(); //otherwise find the outermost opened loop and take its opening brace
-					return opened_loops.top();
-				}();
-				//construct tree with new source code and flash it into the local emulator
-				syntax_tree speculative_execution_code;
-				speculative_execution_code.reserve(std::distance(old_tree.begin(), speculative_begin));
-				std::copy(old_tree.begin(), speculative_begin, std::back_inserter(speculative_execution_code));
+			//iterator past the last guaranteed instruction
+			auto const last_executable_instruction = opened_loops.empty() ? first_io_operation //if we are not in loop, we end at the IO
+				: [&opened_loops]() { //otherwise find the outermost opened loop and take its opening brace
+				for (int redundant_loops = opened_loops.size() - 1; redundant_loops; --redundant_loops)
+					opened_loops.pop();
+				return opened_loops.top();
+			}();
 
-				speculative_emulator.flash_program(speculative_execution_code);
-			}
+			//construct tree with new source code and flash it into the local emulator
+			syntax_tree speculative_execution_code;
+			speculative_execution_code.reserve(std::distance(old_tree.begin(), last_executable_instruction));
+			std::copy(old_tree.begin(), last_executable_instruction, std::back_inserter(speculative_execution_code));
+
+			return speculative_execution_code;
+		}
+
+		syntax_tree precalculate_cell_values(execution::cpu_emulator & speculative_emulator, syntax_tree const& old_tree) {
+			assert(speculative_emulator.has_program()); //sanity check that this function is not called from elsewhere
+			assert(speculative_emulator.state() == execution::execution_state::not_started);
+
 			speculative_emulator.suppress_stop_interrupt() = true;
-			speculative_emulator.do_execute(); //execute the guaranteed code
+			speculative_emulator.do_execute(); //execute the flashed code
 
 			syntax_tree new_tree;
-			new_tree.reserve(old_tree.size() + cell_count * 2 + 1);
+			new_tree.reserve(old_tree.size() + speculative_emulator.memory_size() * 2 + 1);
+
+			using cell_t = execution::cpu_emulator::memory_cell_t;
 			//save the state of emulator's memory in the form of load_const instructions
 			for (cell_t * iter = static_cast<cell_t*>(speculative_emulator.memory_begin()), *end = static_cast<cell_t*>(speculative_emulator.memory_end());;) {
 				cell_t *next = std::find_if(iter, end, [](cell_t cell) {return cell != 0; }); //find the next nonzero cell
@@ -144,15 +149,37 @@ namespace bf {
 				iter = std::next(next);
 			}
 			--new_tree.front().argument_; //decrese the number of cells the CPR moves due to the first instruction
+			return new_tree;
+		}
+
+
+		/*Function performing optimizations on passed syntax_tree by propagting constants wherever possible.
+		New tree of optimized code is returned. Traverses the given source code instruction by instruction,
+		speculatively executes and if the engine finds out that some value is a constant, eliminates all additional operations.*/
+		syntax_tree propagate_consts(syntax_tree const &old_tree) {
+			std::cout << "Propagating const...\n";
+
+			execution::cpu_emulator speculative_emulator; // we set up local emulator to preserve the global state
+			speculative_emulator.flash_program(prepare_speculative_execution_code(old_tree));
+
+			syntax_tree new_tree = precalculate_cell_values(speculative_emulator, old_tree);
 
 			for (std::size_t i = speculative_emulator.program_counter(); i < old_tree.size(); ++i)
-				new_tree.add_instruction(old_tree[i]); //copy the rest of executable code
+				new_tree.add_instruction(old_tree[i]); //copy the rest of executable code 
 			new_tree.relocate_jump_targets();
 
 			std::cout << "In summary execution of " << speculative_emulator.executed_instructions_counter() << " instruction"
 				<< cli::print_plural(speculative_emulator.executed_instructions_counter())
 				<< " will be prevented by the means of const propagation.\n";
 			return new_tree;
+		}
+
+		syntax_tree eliminate_dead_code(syntax_tree const& old_tree) {
+			std::cout << "Eliminating dead code...\n";
+			//TODO implement
+
+			std::cout << "Dead code elimination ended.\n";
+			return old_tree;
 		}
 	}
 
@@ -163,8 +190,12 @@ namespace bf {
 		if (opt_level & optimizations::op_folding) //folding of operations was requested
 			source_tree = fold_operations(source_tree);
 
+		if (opt_level & optimizations::dead_code_elimination)
+			source_tree = eliminate_dead_code(source_tree);
+
 		if (opt_level & optimizations::const_propagation)
 			source_tree = propagate_consts(source_tree);
+
 
 		//TODO opportunity to add other optimizations
 
@@ -185,10 +216,10 @@ namespace bf {
 				return 6;
 			}
 
-			opt_level_t opt_level = optimization_t::none;
+			opt_level_t opt_level = optimizations::none;
 
 			for (auto iter = std::next(argv.begin()), end = argv.end(); iter != end; ++iter)
-				if (opt_level_t tmp = optimizations::get_opt_by_name(*iter); tmp == optimization_t::none) {
+				if (opt_level_t tmp = optimizations::get_opt_by_name(*iter); tmp == optimizations::none) {
 					cli::print_command_error(cli::command_error::argument_not_recognized);
 					return 4;
 				}
