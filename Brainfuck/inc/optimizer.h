@@ -5,28 +5,29 @@
 namespace bf {
 
 	namespace optimizations {
-		enum opt_level_t : unsigned {
+		enum optimization_t : unsigned {
 			none = 0x0,
-			op_folding = 0x1,
-			const_propagation = 0x2,
+			op_folding = 1 << 0,
+			dead_code_elimination = 1 << 1,
+			const_propagation = 1 << 2,
 
 			all = 0xff'ff'ff'ff
 		};
 
 		/*Get optimization bitmask from its name. If optimization_name is not recognized, returns value none.*/
-		opt_level_t get_opt_by_name(std::string_view const optimization_name);
+		optimization_t get_opt_by_name(std::string_view const optimization_name);
 
 		/*Bitwise operations on optimization levels.*/
-		constexpr opt_level_t operator|(opt_level_t const, opt_level_t const);
-		constexpr opt_level_t& operator|=(opt_level_t &, opt_level_t const);
-		constexpr opt_level_t operator&(opt_level_t const, opt_level_t const);
-		constexpr opt_level_t& operator&=(opt_level_t &, opt_level_t const);
-		constexpr opt_level_t operator^(opt_level_t const, opt_level_t const);
-		constexpr opt_level_t& operator^=(opt_level_t &, opt_level_t const);
+		constexpr optimization_t operator|(optimization_t const, optimization_t const);
+		constexpr optimization_t& operator|=(optimization_t &, optimization_t const);
+		constexpr optimization_t operator&(optimization_t const, optimization_t const);
+		constexpr optimization_t& operator&=(optimization_t &, optimization_t const);
+		constexpr optimization_t operator^(optimization_t const, optimization_t const);
+		constexpr optimization_t& operator^=(optimization_t &, optimization_t const);
 
 
 	};
-	using opt_level_t = optimizations::opt_level_t;
+	using opt_level_t = optimizations::optimization_t;
 
 	/*Perform optimizations on given program.
 	Syntax tree "program" undergoes optimizations specified by the bitfield "optimizations"

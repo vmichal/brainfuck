@@ -10,9 +10,9 @@ namespace bf {
 
 	namespace optimizations {
 
-		opt_level_t get_opt_by_name(std::string_view const optimization_name) {
+		optimization_t get_opt_by_name(std::string_view const optimization_name) {
 			using namespace std::string_view_literals;
-			static std::unordered_map<std::string_view, opt_level_t> const optimization_levels{
+			static std::unordered_map<std::string_view, optimization_t> const optimization_levels{
 				{"op_folding"sv, op_folding},
 				{"const_propagation"sv, const_propagation}
 			};
@@ -22,22 +22,22 @@ namespace bf {
 		}
 
 
-		constexpr opt_level_t operator|(opt_level_t const a, opt_level_t const b) {
-			return static_cast<opt_level_t>(static_cast<unsigned>(a) | static_cast<unsigned>(b));
+		constexpr optimization_t operator|(optimization_t const a, optimization_t const b) {
+			return static_cast<optimization_t>(static_cast<unsigned>(a) | static_cast<unsigned>(b));
 		}
-		constexpr opt_level_t& operator|=(opt_level_t & a, opt_level_t const b) {
+		constexpr optimization_t& operator|=(optimization_t & a, optimization_t const b) {
 			return a = a | b;
 		}
-		constexpr opt_level_t operator&(opt_level_t const a, opt_level_t const b) {
-			return static_cast<opt_level_t>(static_cast<unsigned>(a) & static_cast<unsigned>(b));
+		constexpr optimization_t operator&(optimization_t const a, optimization_t const b) {
+			return static_cast<optimization_t>(static_cast<unsigned>(a) & static_cast<unsigned>(b));
 		}
-		constexpr opt_level_t& operator&=(opt_level_t & a, opt_level_t const b) {
+		constexpr optimization_t& operator&=(optimization_t & a, optimization_t const b) {
 			return a = a & b;
 		}
-		constexpr opt_level_t operator^(opt_level_t const a, opt_level_t const b) {
-			return static_cast<opt_level_t>(static_cast<unsigned>(a) ^ static_cast<unsigned>(b));
+		constexpr optimization_t operator^(optimization_t const a, optimization_t const b) {
+			return static_cast<optimization_t>(static_cast<unsigned>(a) ^ static_cast<unsigned>(b));
 		}
-		constexpr opt_level_t& operator^=(opt_level_t & a, opt_level_t const b) {
+		constexpr optimization_t& operator^=(optimization_t & a, optimization_t const b) {
 			return a = a ^ b;
 		}
 
@@ -185,10 +185,10 @@ namespace bf {
 				return 6;
 			}
 
-			opt_level_t opt_level = opt_level_t::none;
+			opt_level_t opt_level = optimization_t::none;
 
 			for (auto iter = std::next(argv.begin()), end = argv.end(); iter != end; ++iter)
-				if (opt_level_t tmp = optimizations::get_opt_by_name(*iter); tmp == opt_level_t::none) {
+				if (opt_level_t tmp = optimizations::get_opt_by_name(*iter); tmp == optimization_t::none) {
 					cli::print_command_error(cli::command_error::argument_not_recognized);
 					return 4;
 				}
@@ -215,7 +215,8 @@ namespace bf {
 			"using the \"flash\" command.\n\n"
 
 			"Currently supported optimization flags:\n"
-			"\top_folding      Folds multiple occurences of the same instruction in a row.\n"
+			"\top_folding         Folds multiple occurences of the same instruction in a row.\n"
+			"\tconst_propagation  Precalculates values of cells if they are known at compile time, independent on the IO.\n"
 
 			, &optimize_callback);
 
