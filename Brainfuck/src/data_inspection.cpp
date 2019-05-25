@@ -363,7 +363,7 @@ namespace bf::data_inspection {
 					int evaluate_token(std::string_view const token) {
 						if (std::isdigit(token.front(), std::locale{})) { //number is converted to integer
 							int val;
-							assert(std::from_chars(token.data(), &*token.end(), val).ptr == token.data() + token.size());
+							std::from_chars(token.data(), std::next(&*std::prev(token.end())), val);
 							return val;
 						}
 						else if (token.front() == '$') { //a variable encountered
@@ -623,9 +623,9 @@ namespace bf::data_inspection {
 					}
 					if (mem_region.unreachable_count_) //requested memory would exceed cpu's internal memory
 						stream << "Another " << std::dec << mem_region.unreachable_count_ << " element" << cli::print_plural(mem_region.unreachable_count_, " has", "s have")
-						<< " been requested, but " << cli::print_plural(mem_region.unreachable_count_, "was", "were") << " out of bounds of cpu's memory.\n"
-						"There have also been " << std::distance(static_cast<char*>(static_cast<void*>(mem_region.begin_)), static_cast<char*>(execution::emulator.memory_end()))
-						<< " misaligned memory locations between last printed address and memory's boundary.\n";
+						<< " been requested, but " << cli::print_plural(mem_region.unreachable_count_, "was", "were") << " out of bounds of cpu's memory.\n";
+					if (std::ptrdiff_t misalign = std::distance(static_cast<char*>(static_cast<void*>(mem_region.begin_)), static_cast<char*>(execution::emulator.memory_end())))
+						std::cout <<"There have also been " << misalign	<< " misaligned memory locations between last printed address and memory's boundary.\n";
 					std::cout << stream.str(); //print buffer's content to stdout
 				}
 
