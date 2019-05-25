@@ -8,19 +8,24 @@
 #include <exception>
 #include <cassert>
 
-//Defines static local boolean and assrts that the code is run just once
+//Defines static local boolean and asserts that the code is run just once
 #define ASSERT_CALLED_ONCE static bool ___first_time = true; assert(___first_time); ___first_time = false;
 
 //Supplies a default option in a switch for which default option shall be an error
-#define ASSERT_NO_OTHER_OPTION default: assert(false); break; //shall not be reached by the control flow
-
+#define ASSERT_NO_OTHER_OPTION default: assert(false); throw 0;     /*shall not be reached by the control flow*/ 
 
 namespace bf::cli {
 
+
 	//Conditionally print "s" if more than one of something is requested
-	inline constexpr char const *print_plural(std::size_t count) {
-		return count == 1 ? "" : "s";
+	inline constexpr char const *print_plural(int count, char const * singular, char const * plural) {
+		return count == 1 ? singular : plural;
 	}
+
+	inline constexpr char const *print_plural(int count) {
+		return print_plural(count, "", "s");
+	}
+
 
 	//Categories of commands used for sorting for example when printing help
 	enum class command_category {
@@ -44,7 +49,7 @@ namespace bf::cli {
 	/*Splits passed string_view using \n as delimiter and returns all lines.*/
 	std::vector<std::string_view> split_to_lines(std::string_view const str);
 
-	/*Returns string_view of line numbered line_num starting at one within the string str. 
+	/*Returns string_view of line numbered line_num starting at one within the string str.
 	New-line chars are not included.*/
 	std::string_view get_line(std::string_view const str, int line_num);
 
@@ -114,5 +119,6 @@ namespace bf::cli {
 
 	//prints error message for specified err_code to the standard error stream
 	void print_command_error(command_error const err_code);
+
 
 }

@@ -90,7 +90,7 @@ namespace bf::cli {
 				//If we have found a string (seemingly alias), which has already been tested before, recusrion has been proven. Break out of it
 				if (std::any_of(recursive_searches.begin(), recursive_searches.end(),
 					[&cmd_name](std::string_view const view) { return view.compare(cmd_name) == 0; })) {
-					std::cout << "You thought that recursive alias will blow my program up, right? Wrong. It has raken me just "
+					std::cout << "You thought that recursive alias will blow my program up, right? Wrong. It has taken me only "
 						<< recursive_searches.size() << " recursive call" << print_plural(recursive_searches.size())
 						<< " to reveal your evil plans.\n";
 					return nullptr;
@@ -207,7 +207,7 @@ namespace bf::cli {
 				code = help_callback_helper::print_command_help(argv[1]);
 
 			std::cout << " \nThis program's help contains currently " << cmd_map.size() << " command" << print_plural(cmd_map.size()) << " and "
-				<< cmd_aliases.size() << " aliases. It is fucking glorious, right?\n";
+				<< cmd_aliases.size() << " " << print_plural(cmd_aliases.size(), "alias", "aliases") << ". It is fucking glorious, right?\n";
 			return code;
 		}
 
@@ -657,8 +657,8 @@ namespace bf::cli {
 		}
 	}
 
-	std::ostream& operator<<(std::ostream& str, command_category cat) {
-		switch (cat) {
+	std::ostream& operator<<(std::ostream& str, command_category category) {
+		switch (category) {
 		case command_category::general: str << "general"; break;
 		case command_category::commands: str << "commands"; break;
 		case command_category::user_defined: str << "user-defined";	break;
