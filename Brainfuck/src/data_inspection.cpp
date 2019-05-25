@@ -28,6 +28,20 @@ namespace bf::data_inspection {
 				instruction
 			};
 
+			int sizeof_data_type(data_type type) {
+				//Map of data types to their sizes in bytes (instructions dont use void* arithmetic, but normal typed ptr => they have size one)
+				static std::unordered_map<data_type, int> const data_sizes{
+					{data_type::byte,		 1},
+					{data_type::word,		 2},
+					{data_type::dword,		 4},
+					{data_type::qword,		 8},
+					{data_type::character,	 1},
+					{data_type::instruction, 1}
+				};
+				assert(data_sizes.count(type));
+				return data_sizes.at(type);
+			}
+
 			/*Output stream operator for data_type*/
 			std::ostream& operator<<(std::ostream& str, data_type type) {
 				switch (type) {
@@ -54,31 +68,129 @@ namespace bf::data_inspection {
 			};
 
 
-			/*Structure of all parameters required for a memory inspection. Specifies location for inspection, its size, type of elements and printing format.*/
+			/*Structure of all parameters required for a memory inspection. Specifies location and direction of inspection, its size, type of elements and printing format.*/
 			struct request_params {
-				int count_;
-				void * address_;
-				data_type type_;
-				data_format format_;
+				int count_;						//how many elements shall be printed
+				void * address_;				//pointer to the requested memory block 
+				data_type type_;				//type of data
+				data_format format_;			//printing format
+				bool print_preceding_memory_;	//determines whether the address_ field is the beginning or the end of memory block 
 			};
 
 			/*Functions providing the service of parsing of passed arguments*/
 			namespace parsing {
 
-				/*Simple enumeration describing into which address space the pointer from resolve_address shall point*/
-				enum class address_space {
-					none,
-					data,
-					code
-				};
+				/*Class which performs the process of request parsing. It was refactored into a class because of the need to keep some state during the parsing
+				(already parsed pieces of information or the pointers into the parsed string) and having the state global did not really appealed to me.*/
+				class request_parser {
 
-				/*Tries to parse specified format_string. It is searched for instructions regarding the type of elements
-				as well as its print format and number of elements which shall be examined. If all information is passed
-				correctly, it is returned in a structure. In case an error is encountered, returned structure has error values
-				such as count_ ==-1 and both type_ and format_ == none.*/
-				request_params parse_request(std::string_view const format_string) {
+					int count_ = 0; // holds the requested number of elements to be examined. Zero indicates an error
+					data_type type_ = data_type::none; //stores information about the requested type of elements
+					data_format format_ = data_format::none; //stores info about the requested format of printing
+
+					bool error_occured_ = false;
+					char const * iterator_, *end_;
+
+					//Extracts a number from the string and interprets it as the count
+					void parse_count() {
+						assert(std::isdigit(*iterator_, std::locale{})); //Must be called only in appropriate situations
+						if (count_ == 0) {//if no number had yet been parsed, parse it
+							iterator_ = std::from_chars(iterator_, end_, count_).ptr; //iterator is incremented to the first char after the number.
+							if (count_ == 0) {
+								std::cerr << "Count cannot be zero.\n";
+								error_occured_ = true;
+							}
+						}
+						else { //we have already parsed a number => parse error
+							std::cerr << "Count had already been specified.\n";
+							error_occured_ = true;
+						}
+					}
+
+					//Extract information about datatype
+					void parse_type() {
+						assert(types_map.count(*iterator_));
+						if (type_ == data_type::none) { //no type has been specified
+							type_ = types_map.at(*iterator_++);
+							if (type_ == data_type::character) // if characters are requested, set both type and format
+								format_ = data_format::character;
+							else if (type_ == data_type::instruction)
+								format_ = data_format::instruction;
+						}
+						else { //type had already been specified => parse error
+							std::cerr << "Data type had already been specified.\n";
+							error_occured_ = true;
+						}
+					}
+
+					//Extract information about the printing format
+					void parse_format() {
+						assert(formats_map.count(*iterator_));
+						if (format_ == data_format::none) { //no format has been specified
+							format_ = formats_map.at(*iterator_++);
+							if (format_ == data_format::character) // if characters are requested, set both type and format
+								type_ = data_type::character;
+							else if (format_ == data_format::instruction)
+								type_ = data_type::instruction;
+						}
+						else { //format has already been specified => parse error
+							std::cerr << "Print format had already been specified.\n";
+							error_occured_ = true;
+						}
+					}
+
+				public:
+
+					/*Tries to parse specified format_string. It is searched for instructions regarding the type of elements
+					as well as its print format and number of elements which shall be examined. If all information is passed
+					correctly, it is returned in a structure. In case an error is encountered, returned structure has error values
+					such as count_ ==-1 and both type_ and format_ == none.*/
+					request_params operator()(std::string_view const format_string) {
+
+						bool examine_before = false;
+
+						//Loop through the passed string searching for type and format specifiers as well as a number (count)
+						for (iterator_ = format_string.data(), end_ = iterator_ + format_string.size(); iterator_ != end_ && !error_occured_; ) {
+							if (*iterator_ == '-') {
+								++iterator_;
+								if (!examine_before)
+									examine_before = true;
+								else {
+									std::cerr << "Direction of examination has already been specified.\n";
+									error_occured_ = true;
+								}
+							}
+							else if (std::isdigit(*iterator_, std::locale{})) //we have found a number
+								parse_count();
+							else if (types_map.count(*iterator_)) //if the referenced char specifies an element type
+								parse_type();
+							else if (formats_map.count(*iterator_))  //if the referenced character specifies a format
+								parse_format();
+							else { // referenced char does not denote any recognized entity. That is a parse error as well.
+								cli::print_command_error(cli::command_error::argument_not_recognized);
+								error_occured_ = true;
+								break;
+							}
+						}
+
+
+						/*If an error has been encountered or some parameter was not specified, set variables to error state
+						already the first condition should catch most of the possible errors, but those others are required to catch
+						problems such as ommiting one of the parameters. Thus if any of the variables retains its initial value, we have an error.*/
+						if (error_occured_ || type_ == data_type::none || format_ == data_format::none) {
+							count_ = 0;
+							type_ = data_type::none;
+							format_ = data_format::none;
+						}
+						else if (count_ == 0) //if no count was given, set it to one
+							count_ = 1;
+						return { count_, nullptr, type_, format_, examine_before }; //return parsed information.
+					}
+
+				private:
+
 					//static maps needed for type and format information parsing
-					static const std::unordered_map<char, data_type> types_map{
+					inline static std::unordered_map<char, data_type> const types_map{
 						{'b', data_type::byte},
 						{'w', data_type::word},
 						{'d', data_type::dword},
@@ -87,92 +199,38 @@ namespace bf::data_inspection {
 						{'i', data_type::instruction}
 					};
 
-					static const std::unordered_map<char, data_format> formats_map{
+					inline static std::unordered_map<char, data_format> const formats_map{
 						{'x', data_format::hex},
 						{'o', data_format::oct},
 						{'u', data_format::unsign},
 						{'s', data_format::sign},
 					};
+				};
 
-					int count = -1; // holds the requested number of elements to be examined. negative one indicates an error
-					data_type type = data_type::none; //stores information about the requested type of elements
-					data_format format = data_format::none; //stores info about the requested format of printing
+				/*Simple enumeration describing into which address space the pointer from resolve_address shall point*/
+				enum class address_space {
+					//none,
+					data,
+					code
+				};
 
-					bool error_occured = false;
-
-					//Loop through the passed string searching for type and format specifiers as well as a number (count)
-					for (char const *iterator = format_string.data(), *end = iterator + format_string.size(); iterator != end; ++iterator) {
-						if (std::isdigit(*iterator, std::locale{})) //we have found a number
-							if (count == -1) {//if no number had yet been parsed, parse it
-								iterator = std::from_chars(iterator, end, count).ptr; //iterator is incremented to the first char after the number.
-								if (iterator == end)
-									break;
-								if (count == 0)
-									error_occured = true;
-							}
-							else { //we have already parsed a number => parse error
-								std::cerr << "Count had already been specified.\n";
-								error_occured = true;
-								break;
-							}//there is no else here, because the iterator has been advanced to the first character after the parsed number => parsing may continue
-						if (types_map.count(*iterator)) //if the referenced char specifies an element type
-							if (type == data_type::none) { //no type has been specified
-								type = types_map.at(*iterator);
-								if (type == data_type::character) // if characters are requested, set both type and format
-									format = data_format::character;
-								else if (type == data_type::instruction)
-									format = data_format::instruction;
-							}
-							else { //type had already been specified => parse error
-								std::cerr << "Data type had already been specified.\n";
-								error_occured = true;
-								break;
-							}
-
-						else if (formats_map.count(*iterator))  //if referenced character specifies a format
-							if (format == data_format::none) { //no format has been specified
-								format = formats_map.at(*iterator);
-								if (format == data_format::character) // if characters are requested, set both type and format
-									type = data_type::character;
-								else if (format == data_format::instruction)
-									type = data_type::instruction;
-							}
-							else { //format has already been specified => parse error
-								std::cerr << "Print format had already been specified.\n";
-								error_occured = true;
-								break;
-							}
-						else { // referenced char does not defnote any recognized entity. That is a parse error as well.
-							cli::print_command_error(cli::command_error::argument_not_recognized);
-							error_occured = true;
-							break;
-						}
-					}
-					if (count == -1) //if no count was given, set it to one
-						count = 1;
-
-					/*If an error has been encountered or some parameter was not specified, set variables to error state
-					already the first condition should catch most of the possible errors, but those others are required to catch
-					problems such as ommiting one of the parameters. Thus if any of the variables retains its initial value, we have an error.*/
-					if (error_occured || type == data_type::none || format == data_format::none) {
-						count = -1;
-						type = data_type::none;
-						format = data_format::none;
-					}
-					return { count, nullptr, type, format }; //return parsed information.
-				}
-
+				/*Split the passed expression to tokens - operators, register names and literals.*/
 				std::vector<std::string_view> tokenize_arithmetic_expression(std::string_view const expression) {
+					if (expression.empty()) //empty expression does not need to be split further, does it?
+						return {};
 					std::vector<std::string_view> tokens;
 					std::string_view::const_iterator iter = expression.begin(), end = expression.end();
-					if (iter != end)
-						if (char c = *iter; c == '+') //if we start with a single prefix plus, we ignore it
-							++iter;
-						else if (c == '-') { //if the first token is a prefix minus, a zero literal is prepended to it
-							tokens.emplace_back("0");
-							tokens.emplace_back(expression.substr(0, 1));
-							++iter;
-						}
+
+					//Check for and handle situation that the expression starts with an operator
+					if (char c = *iter; c == '+') //if we start with a single prefix plus, we ignore it
+						++iter;
+					else if (c == '-') { //if the first token is a prefix minus, a zero literal is prepended to it
+						using namespace std::string_view_literals;
+						tokens.emplace_back("0"sv);
+						tokens.emplace_back("-"sv);
+						++iter;
+					}
+
 					for (; iter != end; ) {
 						std::string_view::const_iterator end_of_token = std::next(iter);
 						if (*iter == '$') //parse a name of a variable
@@ -188,254 +246,262 @@ namespace bf::data_inspection {
 					return tokens;
 				}
 
-				bool validate_expression(std::vector<std::string_view> const& tokens, address_space addr_space) {
-					if (tokens.size() % 2 == 0) //even number of tokens means that some binary operator does not have two operands
-						return false;
+				/*Finite state automaton validating the given arithmetic expression.*/
+				class expression_validator {
 
-					bool register_used = false; //a register's value can be used only once.
-					bool expects_value = true; //the expression should start with a value
+					bool expects_value_ = true;
+					bool register_used_ = false;
+					bool error_ = false;
+					address_space address_space_;
 
-					for (std::string_view const & token : tokens)
-						if (token.front() == '$') { //the token is a CPU's register
-							if (!expects_value || register_used)
-								return false;
-							if ((addr_space == address_space::code && token.compare("$pc"))
-								|| (addr_space == address_space::data && token.compare("$cpr"))) {
-								std::cout << "Address space conflict. Data and code reside in separate locations and therefore addresses cannot mix them.\n";
-								return false;
-							}
-							else
-								register_used = true;
-							expects_value = false;
+					std::vector<std::string_view>::const_iterator current_token_;
+
+
+					void match_register() {
+						if (!expects_value_ || register_used_) //if we already used a register or we don't expect value, expression has an error
+							error_ = true;
+						if ((address_space_ == address_space::code && current_token_->compare("$pc"))
+							|| (address_space_ == address_space::data && current_token_->compare("$cpr"))) {
+							std::cout << "Address space conflict. Data and code reside in separate locations.\n";
+							error_ = true;
 						}
-						else if (std::isdigit(token.front(), std::locale{})) { //the token is a number
-							if (!expects_value)
-								return false;
-							expects_value = false;
+						register_used_ = true;
+						expects_value_ = false;
+					}
+
+					void match_operator() {
+						switch (current_token_->front()) {
+						case '+':
+						case '-':
+						case '*':
+							if (expects_value_)
+								error_ = true;
+							expects_value_ = true;
+							break;
+						default:
+							std::cout << "Unrecognized token " << *current_token_ << " while calculating offset.\n";
+							error_ = true;
 						}
-						else { //most likely an operator or an error, of course
-							assert(token.size() == 1);
-							switch (token.front()) {
-							case '+':
-							case '-':
-							case '*':
-								if (expects_value)
+					}
+
+
+				public:
+					expression_validator(address_space space) : address_space_(space) {}
+
+					bool operator()(std::vector<std::string_view> const& tokens) {
+						if (tokens.size() % 2 == 0) //even number of tokens means that some binary operator does not have two operands
+							return false;
+
+						bool register_used = false; //a register's value can be used only once.
+
+						for (auto token = tokens.begin(), end = tokens.end(); token != end && !error_; ++token)
+							if (token->front() == '$')  //the token is a CPU's register
+								match_register();
+							else if (std::isdigit(token->front(), std::locale{})) { //the token is a number
+								if (!expects_value_)
 									return false;
-								expects_value = true;
-								continue;
-							default:
-								std::cout << "Unrecognized token " << token << " while calculating offset.\n";
-								return false;
+								expects_value_ = false;
+							}
+							else  //most likely an operator or an error, of course
+								match_operator();
+						return error_;
+					}
+
+				};
+
+				class expression_evaluator {
+
+					struct abstract_node {
+						virtual int evaluate() = 0;
+						virtual ~abstract_node() = 0;
+
+						virtual abstract_node *&left() = 0;
+						virtual abstract_node *&right() = 0;
+					};
+
+
+					/*Node, whose evaluation is performed by applying the specified arithemtic operation on the results of evaluation of two subnodes.
+					Is further specialized with functors from the standard library.*/
+					template<typename OPERATION>
+					struct operation_node : abstract_node {
+
+						operation_node(abstract_node *l, abstract_node *r) : left_(l), right_(r) {}
+						virtual ~operation_node() override { delete left_; delete right_; }
+
+						abstract_node *left_, *right_;
+
+						virtual int evaluate() override {
+							return OPERATION{}(left_->evaluate(), right_->evaluate());
+						}
+
+						virtual abstract_node *&right() override { return right_; }
+						virtual abstract_node *&left() override { return left_; }
+
+					};
+
+					using plus_node = operation_node<std::plus<int>>;
+					using minus_node = operation_node<std::minus<int>>;
+					using mul_node = operation_node<std::multiplies<int>>;
+
+
+					/*Node containing number literal, whose evaluation simply yields this literal.*/
+					struct literal_node : abstract_node {
+
+						literal_node(int i) : value_(i) {}
+						virtual ~literal_node() override {};
+
+						int value_;
+
+						virtual int evaluate() override {
+							return value_;
+						}
+
+						virtual abstract_node *&right() override { assert(false); throw std::exception{ "Must not be reached!" }; }
+						virtual abstract_node *&left() override { assert(false); throw std::exception{ "Must not be reached!" }; }
+					};
+
+					int evaluate_token(std::string_view const token) {
+						if (std::isdigit(token.front(), std::locale{})) { //number is converted to integer
+							int val;
+							std::from_chars(token.data(), std::next(&*std::prev(token.end())), val);
+							return val;
+						}
+						else if (token.front() == '$') { //a variable encountered
+							if (token.compare("$pc") == 0) //program counter
+								return execution::emulator.program_counter();
+							else if (token.compare("$cpr") == 0) //cell pointer register
+								return execution::emulator.cell_pointer_offset();
+							else assert(false); //validating function should have cought all errors and typos
+						}
+						else assert(false); //validating function should have cought all errors and typos
+						return -1; //sentinel value, never reached;
+					}
+
+				public:
+					int operator()(std::vector<std::string_view> const& tokens) {
+						assert(tokens.size() % 2 == 1);//sanity check, the number of tokens has to be odd (all operators are binary)
+
+						if (tokens.size() == 1u) //if we got just a single arg, evaluate it straight away
+							return evaluate_token(tokens[0]);
+
+						//otherwise build a tree using heap pointers starting with a IIFE
+						abstract_node *root = [](abstract_node * const left, abstract_node * const right, char const operation) -> abstract_node* {
+							switch (operation) {
+							case '+':
+								return new plus_node{ left, right };
+							case '-':
+								return new minus_node{ left, right };
+							case '*':
+								return new mul_node{ left, right };
+								ASSERT_NO_OTHER_OPTION;
+							}
+							//evaluate first three tokens and estabilish an expression tree
+						}(new literal_node{ evaluate_token(tokens[0]) }, new literal_node{ evaluate_token(tokens[2]) }, tokens[1].front());
+
+						//continue building the tree one operation and one value at a time
+						for (int i = 3; i < static_cast<int>(tokens.size()); i += 2) {
+							literal_node * new_right = new literal_node{ evaluate_token(tokens[i + 1]) };
+							switch (tokens[i].front()) {
+							case '+':
+								root = new plus_node{ root, new_right };
+								break;
+							case '-':
+								root = new minus_node{ root, new_right };
+								break;
+							case '*':
+								root->right() = new mul_node{ root->right(), new_right };
+								break;
+								ASSERT_NO_OTHER_OPTION
 							}
 						}
-					return true;
-				}
-
-
-				struct abstract_node {
-					virtual int evaluate() = 0;
-					virtual ~abstract_node() = 0;
+						int result = root->evaluate();//recursively evaluate the entire expression,
+						delete root;  //delete all the allocated nodes
+						return result; //and return result
+					}
 				};
 
 				//pure virtual destructor must have a body since it's eventually called anyway
-				inline abstract_node::~abstract_node() {}
+				inline expression_evaluator::abstract_node::~abstract_node() {}
 
-				/*Parent type of three derived operation nodes. Evaluation yields value which is the sum, difference or product
-				of the left and right subnodes, depending on the override in the derived type.*/
-				struct operation_node : abstract_node {
+				/*In case evaluation of expression results in a negative offset, this function recalculates this offset to make the inspected memory
+				block fit in between the bounds of valid adress spaces. The memory block is effectively shrinked in the process*/
+				int recalculate_negative_address(int &address_offset, int &count, data_type const requested_type) {
 
-					operation_node(abstract_node *l, abstract_node *r) : left_(l), right_(r) {}
-					virtual ~operation_node() override { delete left_; delete right_; }
-
-					abstract_node *left_, *right_;
-				};
-
-				struct plus_node : operation_node {
-					using operation_node::operation_node;
-
-					virtual int evaluate() override {
-						return left_->evaluate() + right_->evaluate();
-					}
-				};
-
-				struct minus_node : operation_node {
-					using operation_node::operation_node;
-
-					virtual int evaluate() override {
-						return left_->evaluate() - right_->evaluate();
-					}
-				};
-
-				struct mul_node : operation_node {
-					using operation_node::operation_node;
-
-					virtual int evaluate() override {
-						return left_->evaluate() * right_->evaluate();
-					}
-				};
-
-				/*Node containing number literal, whose evaluation simply yields this literal.*/
-				struct literal_node : abstract_node {
-
-					literal_node(int i) : value_(i) {}
-					virtual ~literal_node() override {};
-
-					int value_;
-
-					virtual int evaluate() override {
-						return value_;
-					}
-				};
-
-				int evaluate(std::string_view const view) {
-					if (std::isdigit(view.front(), std::locale{})) { //number is converted to integer
-						int val;
-						std::from_chars(view.data(), view.data() + view.size(), val);
-						return val;
-					}
-					else if (view.front() == '$') { //a variable encountered
-						if (view.compare("$pc") == 0) //program counter
-							return execution::emulator.program_counter();
-						else if (view.compare("$cpr") == 0) //cell pointer register
-							return execution::emulator.cell_pointer_offset();
-						else assert(false); //validating function should have cought all errors and typos
-					}
-					else assert(false); //validating function should have cought all errors and typos
-					return -1; //sentinel value, never reached;
-				}
-
-				int evaluate_expression(std::vector<std::string_view> const& tokens) {
-					assert(tokens.size() % 2 == 1);//sanity check, the number of tokens has to be odd (all operators are binary)
-
-					if (tokens.size() == 1) //if we got just a single arg, evaluate it straight away
-						return evaluate(tokens[0]);
-
-					//otherwise build a tree using heap pointers starting with a IIFE
-					operation_node *root = [](abstract_node * const left, abstract_node * const right, char const operation) -> operation_node* {
-						switch (operation) {
-						case '+':
-							return new plus_node{ left, right };
-						case '-':
-							return new minus_node{ left, right };
-						case '*':
-							return new mul_node{ left, right };
-							ASSERT_NO_OTHER_OPTION;
-						}
-						return nullptr;
-
-						//evaluate first three tokens and estabilish an expression tree
-					}(new literal_node{ evaluate(tokens[0]) }, new literal_node{ evaluate(tokens[2]) }, tokens[1].front());
-
-					//continue building the tree one operation and one value at a time
-					for (int i = 3; i < static_cast<int>(tokens.size()); i += 2) {
-						literal_node * new_right = new literal_node{ evaluate(tokens[i + 1]) };
-						switch (tokens[i].front()) {
-						case '+':
-							root = new plus_node{ root, new_right };
-							break;
-						case '-':
-							root = new minus_node{ root, new_right };
-							break;
-						case '*':
-							root->right_ = new mul_node{ root->right_, new_right };
-							break;
-							ASSERT_NO_OTHER_OPTION
-						}
-
-					}
-					int result = root->evaluate();//recursively evaluate the entire expression,
-					delete root;  //delete all the allocated nodes
-					return result; //and return result
-				};
-
-				std::pair<int, int> recalculate_negative_address(int address_offset, int count, data_type const requested_type) {
-					//Map of data types to their sizes in bytes (instructions dont use void* arithmetic, but normal typed ptr => they have size one)
-					static std::unordered_map<data_type, int> const data_sizes{
-						{data_type::byte,		 1},
-						{data_type::word,		 2},
-						{data_type::dword,		 4},
-						{data_type::qword,		 8},
-						{data_type::character,	 1},
-						{data_type::instruction, 1}
-					};
 					assert(address_offset < 0);
-					assert(data_sizes.count(requested_type));
-					int const element_size = data_sizes.at(requested_type);
 
+					int const element_size = sizeof_data_type(requested_type);
 					//the number of elements we have to skip whatever happens
 					auto[skipped_count, remainder] = std::div(-address_offset, element_size);
+					assert(skipped_count * element_size + remainder == -address_offset); //sanity check lul, first time working with std::div
+
+					if (remainder) //offset is not an integer multile of element_size
+						++skipped_count;
 
 					address_offset += skipped_count * element_size; //move the byte offset by multiple of element_size
 					count -= skipped_count; //and decrease the number of elements we will be printing
 
-					if (remainder) { //offset is not an integer multile of element_size
-						address_offset += element_size;
-						--count;
-						++skipped_count;
-					}
 
-					if (count <= 0) //if the offset was so far out of bounds that no part of the inspected memory block is accessible, return err value
-						return { 0,0 }; //out of bounds
-					if (skipped_count == 1)
-						std::cout << "Skipping one element that was out of bounds...\n";
-					else
-						std::cout << "Skipping " << skipped_count << " elements that were out of bounds...\n";
-					return { address_offset, count }; //return valid values
+					if (count <= 0) {//if the offset was so far out of bounds that no part of the inspected memory block is accessible, return err value
+						std::cout << "Address is too far out of bounds. Operation canceled.\n";
+						return 1; //out of bounds
+					}
+					std::cout << "Skipping " << skipped_count << " element" << cli::print_plural(skipped_count) << " that were out of bounds.\n";
+					return 0;
 				}
 
 
-				/*Tries to parse a string containing the address and returns pointer to cpu's memory.
-				If an erroreous string is given, null is returned. If the address is specified relative to the
-				program counter then offset calculation is performed and pointer directly to the requested instruction is returned*/
-				std::pair<void*, address_space> resolve_address(std::string_view const address_string, int& count, data_type const requested_type) {
-					address_space const expected_address_space = requested_type == data_type::instruction ? address_space::code : address_space::data;
+				/*Tries to parse a string containing the address and sets the corresponding field in the referenced structure accordingly.
+				If an erroneous string is given or any other error is encountered, non-zero integer is returned. If the address is specified relative to some
+				cpu register then the calculation of offsets is performed and pointer directly to the requested instruction is calculated.*/
+				int resolve_address(request_params & request, std::string_view const address_string) {
+					address_space const expected_address_space = request.type_ == data_type::instruction ? address_space::code : address_space::data;
 					std::vector<std::string_view> expression_pieces = tokenize_arithmetic_expression(address_string);
 
 					//If the expression is invalid, there is no point trying to evaluate it
-					if (!validate_expression(expression_pieces, requested_type == data_type::instruction ? address_space::code : address_space::data)) {
-						std::cout << "Invalid address could not be parsed correctly.\n";
-						return { nullptr, address_space::none };
+					if (expression_validator{ expected_address_space }(expression_pieces)) {
+						std::cerr << "Unable to examine memory using invalid syntax for address string. Check help message for this command.\n";
+						return 4;
 					}
 
-					int offset = evaluate_expression(expression_pieces);
-					if (offset < 0) { //if the evaluatin resulted in negative number, move the address to accessible memory and decrease count
-						std::tie(offset, count) = recalculate_negative_address(offset, count, requested_type);
-						if (count == 0)
-							return { nullptr, expected_address_space };
+					int offset = expression_evaluator{}(expression_pieces);		//calculate the offset specified by the user
+					if (request.print_preceding_memory_) //and take the possible inversion of direction into account
+						offset -= request.count_ * sizeof_data_type(request.type_);
+
+					if (offset < 0)  //if the evaluation resulted in negative number, move the address to accessible memory area and decrease count
+						if (recalculate_negative_address(offset, request.count_, request.type_))
+							return 1; //in case we were too far out of bounds, return err code
+
+					if (expected_address_space == address_space::data) { //data memory shall be inspected
+						if (offset >= execution::emulator.memory_size()) {//we want some data behind the end of memory
+							std::cerr << "Specified address was out of bounds.\n";
+							return 2;
+						}
+						request.address_ = static_cast<unsigned char*>(execution::emulator.memory_begin()) + offset;
 					}
-					if (expected_address_space == address_space::data) {
-						if (offset >= execution::emulator.memory_size()) //we want instruction behind the end of memory
-							return { nullptr, address_space::data };
-						return { static_cast<unsigned char*>(execution::emulator.memory_begin()) + offset, address_space::data };
+					else { //we are working in the instruction memory
+						if (offset >= execution::emulator.instructions_size()) {//we an instruction behind the end of memory
+							std::cerr << "Specified address was out of bounds.\n";
+							return 3;
+						}
+						request.address_ = execution::emulator.instructions_begin() + offset;
 					}
-					assert(expected_address_space == address_space::code);
-					if (offset >= execution::emulator.instructions_size()) //we want data behind the end of memory
-						return { nullptr, address_space::code };
-					return { execution::emulator.instructions_begin() + offset, address_space::code };
+					return 0;
 				}
+
 
 				/*Parses given parameters and extracts all necessary arguments for memory inspection. These arguments are returned together with
 				an error code, which signals whether the parsing phase resulted in an error or not. Zero signals that everything is allright.*/
 				std::pair<request_params, int> parse_parameters(std::string_view const format, std::string_view const address) {
 
-					request_params request = parse_request(format); //collect all information about type, count and format
-					if (request.count_ == -1) {
+					request_params request = request_parser{}(format); //collect all information about type, count and format
+					if (request.count_ == 0) {
 						std::cerr << "Unable to examine memory using invalid syntax for format string. Check help message for this command.\n";
 						return { request, 3 };
 					}
-					address_space addr_space;
 
-					std::tie(request.address_, addr_space) = resolve_address(address, request.count_, request.type_); //add information about the starting address 
-					if (addr_space == address_space::none) { //if either of the functions encountered some error, 
-						std::cerr << "Unable to examine memory using invalid syntax for address string. Check help message for this command.\n";
-						return { request, 4 }; //return non-zero error code
-					}
-					if (!request.address_) { //address is null, nut we got here => out of bounds
-						std::cerr << "Specified address was out of bounds.\n";
-						return { request, 5 };
-					}
-					//these two booleans must have the same value to proceed
-					return { request, 0 }; //address space matches the required type of data
+					//add information about the address. 
+					int ret_code = resolve_address(request, address);
+					return { request, ret_code };
 				}
 			}
 
@@ -458,12 +524,14 @@ namespace bf::data_inspection {
 				assert(address >= execution::emulator.memory_begin() && address < execution::emulator.memory_end());
 
 				//We have to perform nested typecasts to prevent compile errors if emulator's memory's underlying cell type changed
-				int const bytes_to_end = static_cast<int>(static_cast<unsigned char*>(static_cast<void*>(execution::emulator.memory_end()))
-					- static_cast<unsigned char*>(static_cast<void*>(address)));
+				int const bytes_to_end = static_cast<int>(std::distance(static_cast<char*>(address), static_cast<char*>(execution::emulator.memory_end())));
+
+
 				//Actual number of elements is the lower from maximal possible number and requested count
 				int const element_count = std::min<int>(bytes_to_end / sizeof(ELEMENT_TYPE), requested_element_count);
+				if (element_count == 0)
+					std::cout << "No element can be printed, too close to the memory's bounds.\n";
 
-				//I need to return using launder to prevent the compiler from nasty optimizations which may lead to some UB
 				return { static_cast<ELEMENT_TYPE*>(address),
 					static_cast<ELEMENT_TYPE*>(address) + element_count,
 					requested_element_count - element_count };
@@ -477,7 +545,7 @@ namespace bf::data_inspection {
 				/*Helper function for do_print. If the given character is printable, it is returned as it is. If it denotes an escape
 				sequence, a short string represenation is printed. Otherwise hex value is printed.*/
 				std::string const get_readable_char_representation(char const c) {
-					static const std::unordered_map<char, std::string> escape_seqs{
+					static  std::unordered_map<char, std::string> const escape_seqs{
 						{'\0', "NUL"},
 						{'\n', "LF"},
 						{'\t', "HT"},
@@ -513,7 +581,9 @@ namespace bf::data_inspection {
 				template<typename ELEMENT_TYPE, std::ios_base &(*RADIX_MANIPULATOR)(std::ios_base&), int NUMBER_WIDTH>
 				void do_print_data(void *const address, int const count) {
 					//get boundaries between which it is safe to read values from memory
-					inspected_memory_region<ELEMENT_TYPE> region = get_inspected_data_memory_region<ELEMENT_TYPE>(address, count);
+					inspected_memory_region<ELEMENT_TYPE> mem_region = get_inspected_data_memory_region<ELEMENT_TYPE>(address, count);
+					if (count == mem_region.unreachable_count_) //we are too close to boundary, must return
+						return;
 					constexpr int elements_on_line = 16 / sizeof(ELEMENT_TYPE); //number of consecutive elements which will reside on single line
 
 					std::ostringstream stream; //Output buffer enormously increasing the speed of printing
@@ -522,37 +592,40 @@ namespace bf::data_inspection {
 						stream << std::setw(NUMBER_WIDTH) << i * sizeof(ELEMENT_TYPE);
 					stream << std::setfill('0') << std::showbase << "\n\n";
 
-					int data_index = static_cast<int>(std::distance(static_cast<unsigned char*>(execution::emulator.memory_begin()), static_cast<unsigned char*>(static_cast<void*>(region.begin_))));
+					int memory_offset = static_cast<int>(std::distance(static_cast<char*>(execution::emulator.memory_begin())
+						, static_cast<char*>(static_cast<void*>(mem_region.begin_))));
 
 					//While there are more elements than can fit on a single line, print them by lines
-					while (std::distance(region.begin_, region.end_) >= elements_on_line) {
+					while (std::distance(mem_region.begin_, mem_region.end_) >= elements_on_line) {
 						//first print the pointer value and follow it with the given manipulator 
-						stream << std::setw(12) << std::setfill(' ') << std::hex << data_index << RADIX_MANIPULATOR;
-						data_index += 16;
-						for (int i = 0; i < elements_on_line; ++i, ++region.begin_) {//print values
+						stream << std::setw(12) << std::setfill(' ') << std::hex << memory_offset << RADIX_MANIPULATOR;
+						memory_offset += 16;
+
+						for (int i = 0; i < elements_on_line; ++i, ++mem_region.begin_) {//print values
 							stream << std::setw(NUMBER_WIDTH); //reserves enough space in output stream
 							if constexpr (std::is_same_v<std::remove_cv_t<ELEMENT_TYPE>, char>) //compile time if
-								stream << get_readable_char_representation(*region.begin_); //print as character
+								stream << get_readable_char_representation(*mem_region.begin_); //print as character
 							else
-								stream << +*region.begin_; //print as a number
+								stream << +*mem_region.begin_; //print as a number
 						}
 						stream << '\n';
 					}
-					if (region.begin_ != region.end_) { //if there is a part of line remaining
-						stream << std::setw(12) << std::setfill(' ') << std::hex << data_index << RADIX_MANIPULATOR;
-						for (; region.begin_ < region.end_; ++region.begin_) {//print the address followed by consecutive values again
+					if (mem_region.begin_ != mem_region.end_) { //if there is a part of line remaining
+						stream << std::setw(12) << std::setfill(' ') << std::hex << memory_offset << RADIX_MANIPULATOR;
+						for (; mem_region.begin_ != mem_region.end_; ++mem_region.begin_) {//print the address followed by consecutive values again
 							stream << std::setw(NUMBER_WIDTH); //reserve space once more
 							if constexpr (std::is_same_v<std::remove_cv_t<ELEMENT_TYPE>, char>)
-								stream << get_readable_char_representation(*region.begin_); //print as char 
+								stream << get_readable_char_representation(*mem_region.begin_); //print as char 
 							else
-								stream << +*region.begin_; //print as number
+								stream << +*mem_region.begin_; //print as number
 						}
 						stream << '\n';
 					}
-					if (region.unreachable_count_) //requested memory would exceed cpu's internal memory
-						stream << "Another " << std::dec << region.unreachable_count_ << " element" << cli::print_plural(region.unreachable_count_) << " had been requested, but were out of bounds of cpu's memory.\n"
-						"There have also been " << std::distance(static_cast<char*>(static_cast<void*>(region.begin_)), static_cast<char*>(execution::emulator.memory_end()))
-						<< " misaligned memory locations between last printed address and memory's boundary.\n";
+					if (mem_region.unreachable_count_) //requested memory would exceed cpu's internal memory
+						stream << "Another " << std::dec << mem_region.unreachable_count_ << " element" << cli::print_plural(mem_region.unreachable_count_, " has", "s have")
+						<< " been requested, but " << cli::print_plural(mem_region.unreachable_count_, "was", "were") << " out of bounds of cpu's memory.\n";
+					if (std::ptrdiff_t misalign = std::distance(static_cast<char*>(static_cast<void*>(mem_region.begin_)), static_cast<char*>(execution::emulator.memory_end())))
+						std::cout <<"There have also been " << misalign	<< " misaligned memory locations between last printed address and memory's boundary.\n";
 					std::cout << stream.str(); //print buffer's content to stdout
 				}
 
@@ -566,7 +639,7 @@ namespace bf::data_inspection {
 						char_width = sizeof(ELEMENT_TYPE) + 6,
 						dec_width = sizeof(ELEMENT_TYPE) * 3 + sizeof(ELEMENT_TYPE);
 
-					static  std::unordered_map<data_format, void(*)(void*, int)> const print_functions{
+					static std::unordered_map<data_format, void(*)(void*, int)> const print_functions{
 						{data_format::hex, do_print_data<std::make_unsigned_t<ELEMENT_TYPE>, std::hex, hex_width>}, //pass std::hex as manipulator
 						{data_format::oct, do_print_data<std::make_unsigned_t<ELEMENT_TYPE>, std::oct, oct_width>}, //pass std::oct as manipulator
 						{data_format::sign, do_print_data<std::make_signed_t<ELEMENT_TYPE>, std::dec, dec_width>},  //make sure a signed type is used and pass std::dec as as manipulator
@@ -589,18 +662,22 @@ namespace bf::data_inspection {
 				void do_print_instructions(void * const address, int count, data_format const format) {
 					assert(format == data_format::instruction);
 					assert(count > 0); //sanity checks
+					assert(address < execution::emulator.instructions_end());
+					assert(address >= execution::emulator.instructions_begin());
 
 					std::ostringstream stream; //buffer to increase printing speed
 					instruction const* current_instruction = static_cast<instruction*>(address),
 						*const instructions_end = execution::emulator.instructions_end();
+
 					//offset of the first instruction from the memory's start
 					int instruction_index = static_cast<int>(std::distance<instruction const*>(execution::emulator.instructions_begin(), current_instruction));
-					//saved position of program counter to print an arrow at the pointed to instruction
+					//saved position of program counter to print an arrow indicator at the location of instruction under the pointer
 					int const pc_position = execution::emulator.program_counter();
 
 					for (; current_instruction != instructions_end && count; ++current_instruction, --count) {
 						stream << std::setw(2) << std::right << (instruction_index == pc_position ? "=>" : "");
-						stream << std::setw(6) << instruction_index++ << "   "; //must be separated, else unsequenced modification
+						stream << std::setw(6) << instruction_index++ << "   "; //must be separated, else unsequenced modification of instruction_index
+
 						if (current_instruction->type_ == instruction_type::breakpoint) { //if we encounter a breakpoint, we print the replaced instruction instead
 							//address of this instruction
 							int const addr = static_cast<int>(std::distance<instruction const*>(execution::emulator.instructions_begin(), current_instruction));
@@ -626,7 +703,7 @@ namespace bf::data_inspection {
 			} //namespace printer_functions
 
 			/*Perform dynamic dispatch and call appropriate callback for given type of data. Does not do much more...*/
-			void perform_print_function_resolution(void * const address, int const count, data_type const type, data_format const format) {
+			void perform_print_function_resolution(request_params const& request) {
 				//static const map of function pointers which are used as a callback for given data_type 
 				static  std::unordered_map<data_type, void(*)(void*, int, data_format)> const print_functions{
 					{data_type::byte, &printer_functions::resolve_data_printer_function<uint8_t>},
@@ -636,25 +713,21 @@ namespace bf::data_inspection {
 					{data_type::character, &printer_functions::resolve_data_printer_function<char>},
 					{data_type::instruction, &printer_functions::do_print_instructions}
 				};
-				assert(print_functions.count(type));
+				assert(print_functions.count(request.type_));
 				//sanity checks of parameters
-				assert(count > 0);
-				assert(type != data_type::none);
-				assert(format != data_format::none);
+				assert(request.count_ > 0);
+				assert(request.type_ != data_type::none);
+				assert(request.format_ != data_format::none);
 				//Sanity check. This is an internal function and therefore must operate safely 
-				if (type == data_type::instruction)
-					assert(execution::emulator.instructions_begin() <= address && address < execution::emulator.instructions_end());
+				if (request.type_ == data_type::instruction)
+					assert(execution::emulator.instructions_begin() <= request.address_ && request.address_ < execution::emulator.instructions_end());
 				else
-					assert(execution::emulator.memory_begin() <= address && address < execution::emulator.memory_end());
+					assert(execution::emulator.memory_begin() <= request.address_ && request.address_ < execution::emulator.memory_end());
 
-				std::cout << "Memory inspection of " << count << ' ' << type << cli::print_plural(count) << '\n';
+				std::cout << "Memory inspection of " << request.count_ << ' ' << request.type_ << cli::print_plural(request.count_) << '\n';
 
 				//get the coresponding function pointer and call it passing the inspection request
-				print_functions.at(type)(address, count, format);
-			}
-
-			void perform_print_function_resolution(request_params const& data) {
-				perform_print_function_resolution(data.address_, data.count_, data.type_, data.format_);
+				print_functions.at(request.type_)(request.address_, request.count_, request.format_);
 			}
 
 		}
@@ -670,8 +743,8 @@ namespace bf::data_inspection {
 
 			if (!execution::emulator.has_program()) {
 				std::cerr << "CPU has neither a program to run, nor accessible memory.\n";
-				/*I don't really care what the next return value should be; if someone wanted to count all the possible
-				paths the control may flow during parsing and memory inspection, let him change this return value.*/
+				/*I don't really care what the next return value should be; if someone wished and counted all the possible
+				paths the control may flow during argument parsing and memory inspection, may he change this return value to the exact value.*/
 				return 18;
 			}
 
@@ -728,24 +801,33 @@ namespace bf::data_inspection {
 		cli::add_command("mem", cli::command_category::debug, "Examines emulator's memory",
 			"Usage: \"mem\" request address\n\n"
 
-			"Parameter address denotes the address at which the examination of memory shall start.\n"
-			"Its value may be specified as a arithmetic expression using addition, subtraction and simple multiplication of integers\n"
-			"as well as using one of the reserved values \"$cpr\" or \"$pc\", which are replaced by the current values of emulator's\n"
+			"Parameter address denotes the address relative to which the examination shall be performed.\n"
+			"Its value may be specified as an arithmetic expression using addition, subtraction and simple multiplication of integers\n"
+			"as well as using one of the variables \"$cpr\" or \"$pc\", which are replaced by the current values of emulator's\n"
 			"cell pointer register ($cpr) and the program counter register ($pc) respectively. It is also important to understand, that\n"
-			"instructions as well as data reside in separate address spaces, which do not overlap or interleave. Therefore it is an error\n"
+			"instructions and data reside in separate address spaces which do not overlap. It is therefore an error\n"
 			"to request instructions from an address relative to the CPR or vice versa examine data from addresses relative to PC.\n\n"
 
 			"Parameter request specifies how and how much data shall be inspected. To fulfill its destiny, this param specifies the following:\n"
-			"\ta) the number of elements to be printed (given as a positive integer)\n"
-			"\tb) the type of each element (size in bytes, signedness)\n"
-			"\tc) format using which the numbers shall be printed\n"
-			"The type is specified using a single character from the set {'b', 'w', 'd', 'q', 'c', 'i'}\n"
-			"The printing format is specified using a single character from the set {'x', 'o', 'u', 's'}\n"
-			"Each character has unambiguous meaning and therefore the order of parameters does not matter with the exception of the integer specifying count,\n"
-			"which shall not contain any other characters other than a digit and must therefore appear as a contiguous string of digits.\n"
-			"Specifying count is however optional, if no number is supplied, one is assumed.\n"
+			"\ta) the number of elements to be printed (given as a positive integer),\n"
+			"\tb) the type of each element (size in bytes, signedness),\n"
+			"\tc) format using which the numbers shall be printed,\n"
+			"\td) whether the address parameter is used as staring or end point.\n"
+
+			"The data type is specified using a single character from the set {'b', 'w', 'd', 'q', 'c', 'i'}\n"
+			"The format is specified using a single character from the set {'x', 'o', 'u', 's'}\n"
+			"Each character has unambiguous meaning and therefore their order is irrelevant with the exception of the integer specifying count,\n"
+			"as it must appear as a contiguous string of digits.\n"
+			"Specifying count is optional however - if no number is supplied, one is assumed.\n"
 			"If inspection of characters is requested using 'c', no format is expected since 'c' specifies both type and format simultaneously.\n"
-			"The same applies to inspecting instructions, as 'i' specifies both the format and type as well.\n\n"
+			"The same applies to inspecting instructions, as 'i' specifies both the format and type as well.\n"
+			"If there is a minus sign, the direction of examination is inverted. In such case the effective address (found by resolving and calculating\n"
+			"the value of the expression specified as the address parameter) does not specify a location at which examination starts, but ends. Count\n"
+			"elements preceding this location are printed.\n\n"
+
+			"If the requested memory area exceeds the bounds of memory, it is shrinked by an integer multiple of type's size in bytes, this operation\n"
+			"is repeated for both ends of the area to prevent access violations.\n\n"
+
 
 			"Keep in mind that executable instructions and memory for data reside in entirely different address spaces, it is therefore an error\n"
 			"to access data using address relative to the PC or to access instructions using address relative to the CPR. Such mismatches are reported.\n\n"
@@ -769,8 +851,9 @@ namespace bf::data_inspection {
 			"\"mem i $pc\"             => print a single instruction pointed to by program counter.\n"
 			"\"mem u8d -12+$cpr\"      => print eight unsigned doublewords starting at the CPU's CPR minus twelve .\n"
 			"\"mem c2 0\"              => print two characters from the beginning of the memory.\n"
-			"\"mem sb4 $cpr\"          => print four bytes referenced by cpu's cell pointer interpreting them as signed numbers.\n"
-			"\"mem i14 $pc+9\"         => print fourteen instructions starting at offset nine relative to the program counter."
+			"\"mem sb-4 $cpr\"         => print four bytes preceding the cpu's cell pointer interpreting them as signed numbers.\n"
+			"\"mem i14 $pc+9\"         => print fourteen instructions starting at offset nine relative to the program counter.\n"
+			"\"mem -i 11\"             => print single instruction preceding the instruction at address 11 (i.e. print instruction at address 10)."
 
 			, &mem_callback);
 		cli::add_command_alias("x", "mem");

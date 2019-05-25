@@ -139,8 +139,9 @@ namespace bf {
 			for (cell_t * iter = static_cast<cell_t*>(speculative_emulator.memory_begin()), *end = static_cast<cell_t*>(speculative_emulator.memory_end());;) {
 				cell_t *next = std::find_if(iter, end, [](cell_t cell) {return cell != 0; }); //find the next nonzero cell
 				if (next == end) { //if we run out of cells, move the CPR to the desired position within the memory as if the code had been run normally
-					new_tree.add_instruction(instruction_type::left,static_cast<int>(std::distance(static_cast<cell_t*>(speculative_emulator.memory_begin())
-						, iter)) - speculative_emulator.cell_pointer_offset(), 0);
+					new_tree.add_instruction(instruction_type::right,
+						static_cast<int>(std::distance(iter, static_cast<cell_t*>(speculative_emulator.memory_end())))
+						+ speculative_emulator.cell_pointer_offset() + 1 , 0);
 					break;
 				}
 				//emit instructions to traverse emulator's memory and load constants

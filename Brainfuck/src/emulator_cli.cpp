@@ -95,7 +95,6 @@ namespace bf::execution {
 				return 4;
 				ASSERT_NO_OTHER_OPTION
 			}
-			return -1;//necessary as the assert only breaks
 		}
 
 		/*Function callback for cli command start. Accepts no arguments, sets a temporary breakpoint at the first instruction and runs the CPU.*/
@@ -133,7 +132,6 @@ namespace bf::execution {
 					return 0;
 					ASSERT_NO_OTHER_OPTION
 				}
-				return -1;//necessary as the assert only breaks
 			}
 
 			int do_perform_steps(int step_count) {
@@ -295,8 +293,6 @@ namespace bf::execution {
 					return redirect_stream(stream, argv[2]);
 				ASSERT_NO_OTHER_OPTION;
 			}
-			return -1; //dummy value, as assert gets compiled out 
-
 		}
 
 		/*Function callback for reset cli command. Does nothig else but resets the CPU*/
