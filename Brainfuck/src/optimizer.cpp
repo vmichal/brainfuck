@@ -15,11 +15,14 @@ namespace bf {
 			static std::unordered_map<std::string_view, optimization_t> const optimization_levels{
 				{"op_folding"sv, op_folding},
 				{"dead_code_elimination"sv, dead_code_elimination},
-				{"const_propagation"sv, const_propagation}
+				{"const_propagation"sv, const_propagation},
+				{"loop_analysis"sv, loop_analysis}
 			};
 
-			if (optimization_levels.count(optimization_name) == 0)
+			if (optimization_levels.count(optimization_name) == 0) {
+				std::cerr << "Unknown opetimization " << optimization_name << '\n';
 				return none;
+			}
 			return optimization_levels.at(optimization_name);
 		}
 
@@ -141,7 +144,7 @@ namespace bf {
 				if (next == end) { //if we run out of cells, move the CPR to the desired position within the memory as if the code had been run normally
 					new_tree.add_instruction(instruction_type::right,
 						static_cast<int>(std::distance(iter, static_cast<cell_t*>(speculative_emulator.memory_end())))
-						+ speculative_emulator.cell_pointer_offset() + 1 , 0);
+						+ speculative_emulator.cell_pointer_offset() + 1, 0);
 					break;
 				}
 				//emit instructions to traverse emulator's memory and load constants
@@ -160,26 +163,63 @@ namespace bf {
 		syntax_tree propagate_consts(syntax_tree const &old_tree) {
 			std::cout << "Propagating const...\n";
 
-			execution::cpu_emulator speculative_emulator; // we set up local emulator to preserve the global state
-			speculative_emulator.flash_program(prepare_speculative_execution_code(old_tree));
+			std::unique_ptr<execution::cpu_emulator> speculative_emulator = std::make_unique<execution::cpu_emulator>(); // we set up local emulator to preserve the global state
 
-			syntax_tree new_tree = precalculate_cell_values(speculative_emulator, old_tree);
+			speculative_emulator->flash_program(prepare_speculative_execution_code(old_tree));
 
-			for (std::size_t i = speculative_emulator.program_counter(); i < old_tree.size(); ++i)
+			syntax_tree new_tree = precalculate_cell_values(*speculative_emulator, old_tree);
+
+			for (std::size_t i = speculative_emulator->program_counter(); i < old_tree.size(); ++i)
 				new_tree.add_instruction(old_tree[i]); //copy the rest of executable code 
 			new_tree.relocate_jump_targets();
 
-			std::cout << "In summary execution of " << speculative_emulator.executed_instructions_counter() << " instruction"
-				<< cli::print_plural(speculative_emulator.executed_instructions_counter())
+			std::cout << "In summary execution of " << speculative_emulator->executed_instructions_counter() << " instruction"
+				<< cli::print_plural(speculative_emulator->executed_instructions_counter())
 				<< " will be prevented by the means of const propagation.\n";
 			return new_tree;
 		}
 
 		syntax_tree eliminate_dead_code(syntax_tree const& old_tree) {
 			std::cout << "Eliminating dead code...\n";
-			//TODO implement
 
-			std::cout << "Dead code elimination ended.\n";
+			syntax_tree new_tree;
+			int eliminated_instructions = 0;
+
+			for (auto iter = old_tree.begin(), end = std::prev(old_tree.end()); iter != end; ++iter) {
+				instruction const& current = *iter, next = *std::next(iter);
+
+				switch (current.type_) {
+				case instruction_type::inc:
+					if (next.type_ == instruction_type::dec) {
+						//TODO implement
+					}
+					break;
+				case instruction_type::dec:
+					if (next.type_ == instruction_type::inc) {
+
+					}
+					break;
+				case instruction_type::left:
+					if (next.type_ == instruction_type::right) {
+
+					}
+					break;
+				case instruction_type::right:
+					if (next.type_ == instruction_type::left) {
+
+					}
+					break;
+
+				}
+			}
+
+			std::cout << "Dead code elimination ended, " << eliminated_instructions << " instruction" << cli::print_plural(eliminated_instructions) << " eliminated.\n";
+			new_tree.relocate_jump_targets();
+			return new_tree;
+		}
+
+		syntax_tree loop_analysis(syntax_tree const& old_tree) {
+			//TODO implement
 			return old_tree;
 		}
 	}
@@ -190,6 +230,9 @@ namespace bf {
 
 		if (opt_level & optimizations::op_folding) //folding of operations was requested
 			source_tree = fold_operations(source_tree);
+
+		if (opt_level & optimizations::loop_analysis)
+			source_tree = loop_analysis(source_tree);
 
 		if (opt_level & optimizations::dead_code_elimination)
 			source_tree = eliminate_dead_code(source_tree);

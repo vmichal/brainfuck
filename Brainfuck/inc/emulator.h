@@ -139,6 +139,7 @@ namespace bf::execution {
 
 		std::istream * emulated_program_stdin_ = &std::cin;
 		std::ostream * emulated_program_stdout_ = &std::cout;
+		bool stdin_eof_ = false;
 
 	public:
 		std::istream*& emulated_program_stdin() { return emulated_program_stdin_; }

@@ -18,11 +18,13 @@ namespace bf::cli {
 
 
 	//Conditionally print "s" if more than one of something is requested
-	inline constexpr char const *print_plural(int count, char const * singular, char const * plural) {
-		return count == 1 ? singular : plural;
+	template<typename INT, typename = std::enable_if_t<std::is_integral_v<INT>>>
+	inline constexpr char const *print_plural(INT count, char const * singular, char const * plural) {
+		return count == INT(1) ? singular : plural;
 	}
 
-	inline constexpr char const *print_plural(int count) {
+	template<typename INT, typename = std::enable_if_t<std::is_integral_v<INT>>>
+	inline constexpr char const *print_plural(INT count) {
 		return print_plural(count, "", "s");
 	}
 

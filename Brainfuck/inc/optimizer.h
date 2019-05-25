@@ -10,6 +10,7 @@ namespace bf {
 			op_folding = 1 << 0,
 			dead_code_elimination = 1 << 1,
 			const_propagation = 1 << 2,
+			loop_analysis = 1 << 3,
 
 			all = 0xff'ff'ff'ff
 		};

@@ -1,5 +1,5 @@
 Project Brainfuck - Optimizing compiler and virtual machine for the Brainfuck programming language with a command line interface.  
-© Vojtìch Michal 2019 
+© Vojtech Michal 2019 
 
 Bug reports and pull requests - vojta.michall@email.cz
 

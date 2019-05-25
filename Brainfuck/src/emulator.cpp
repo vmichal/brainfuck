@@ -48,6 +48,7 @@ namespace bf::execution {
 		flags_register_.reset();
 		cell_pointer_reg_ = memory_.data();
 		state_ = execution_state::not_started;
+		stdin_eof_ = false;
 		assert(emulated_program_stdin_);
 		assert(emulated_program_stdout_);
 		if (emulated_program_stdin_ != &std::cin) {
@@ -59,7 +60,6 @@ namespace bf::execution {
 	void cpu_emulator::left(int count) {
 		assert(count > 0);
 		cell_pointer_reg_ -= count;
-		//TODO change to while
 		while (cell_pointer_reg_ < memory_begin())  //if the value exceeds memory's bounds
 			cell_pointer_reg_ += memory_size();
 	}
@@ -100,7 +100,9 @@ namespace bf::execution {
 		case instruction_type::in: //read char from stdin
 			if (int const read = emulated_program_stdin_->get(); read == std::char_traits<char>::eof()) {
 				std::cout << "\nEnd of input stream hit.\n";
-				flags_register_.os_interrupt() = true;
+				if (stdin_eof_)
+					flags_register_.os_interrupt() = true;
+				stdin_eof_ = true;
 			}
 			else
 				*cell_pointer_reg_ = static_cast<memory_cell_t>(read);
