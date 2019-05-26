@@ -1,6 +1,6 @@
 #pragma once
 
-#include "syntax_tree.h"
+#include "program_code.h"
 #include "memory_state.h"
 #include "breakpoint.h"
 

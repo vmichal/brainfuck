@@ -165,7 +165,7 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\optimizer.cpp" />
     <ClCompile Include="src\syntax_check.cpp" />
-    <ClCompile Include="src\syntax_tree.cpp" />
+    <ClCompile Include="src\program_code.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="inc\breakpoint.h" />
@@ -176,7 +176,7 @@
     <ClInclude Include="inc\memory_state.h" />
     <ClInclude Include="inc\optimizer.h" />
     <ClInclude Include="inc\syntax_check.h" />
-    <ClInclude Include="inc\syntax_tree.h" />
+    <ClInclude Include="inc\program_code.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

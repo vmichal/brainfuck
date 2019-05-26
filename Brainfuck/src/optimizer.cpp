@@ -73,16 +73,16 @@ namespace bf {
 				}
 				auto const current = iter;
 				//while instructions have same type, advance iterator
-				iter = std::find_if(++iter, end, [&current](instruction const& i) {return i.type_ != current->type_; });
+				iter = std::find_if(++iter, end, [&current](instruction const& i) {return i.op_code_ != current->op_code_; });
 				int const distance = static_cast<int>(std::distance(current, iter)); //number of instruction to be folded
 				if (distance > 1) {//if we are folding, print message
-					std::cout << "Folding " << distance << ' ' << current->type_ << " instructions ("
+					std::cout << "Folding " << distance << ' ' << current->op_code_ << " instructions ("
 						<< std::distance(old_tree.begin(), current) << '-' << std::distance(old_tree.begin(), iter) - 1
 						<< ") => " << new_tree.size() << ".\n";
 					++folds_performed;
 				}
 				//add instruction of same type and offset as the first instruction of block. Argument is the number of consecutive instructions
-				new_tree.add_instruction(current->type_, distance, current->source_offset_);
+				new_tree.add_instruction(current->op_code_, distance, current->source_offset_);
 			}
 			std::cout << "Folding finished.\n";
 			new_tree.relocate_jump_targets(); //make sure jumps in the new tree are correctly located
@@ -101,11 +101,11 @@ namespace bf {
 			//traverse the code pushing opened loops on the stack until an IO operation is encountered
 			std::stack<std::vector<instruction>::const_iterator> opened_loops;
 			for (auto iter = old_tree.begin(); iter != first_io_operation; ++iter)
-				switch (iter->type_) {
-				case instruction_type::loop_begin:
+				switch (iter->op_code_) {
+				case op_code::loop_begin:
 					opened_loops.push(iter);
 					break;
-				case instruction_type::loop_end:
+				case op_code::loop_end:
 					assert(!opened_loops.empty());
 					opened_loops.pop();
 					break;
@@ -142,14 +142,14 @@ namespace bf {
 			for (cell_t * iter = static_cast<cell_t*>(speculative_emulator.memory_begin()), *end = static_cast<cell_t*>(speculative_emulator.memory_end());;) {
 				cell_t *next = std::find_if(iter, end, [](cell_t cell) {return cell != 0; }); //find the next nonzero cell
 				if (next == end) { //if we run out of cells, move the CPR to the desired position within the memory as if the code had been run normally
-					new_tree.add_instruction(instruction_type::right,
+					new_tree.add_instruction(op_code::right,
 						static_cast<int>(std::distance(iter, static_cast<cell_t*>(speculative_emulator.memory_end())))
 						+ speculative_emulator.cell_pointer_offset() + 1, 0);
 					break;
 				}
 				//emit instructions to traverse emulator's memory and load constants
-				new_tree.add_instruction(instruction_type::right, static_cast<int>(std::distance(iter, next)) + 1, 0);
-				new_tree.add_instruction(instruction_type::load_const, *next, 0);
+				new_tree.add_instruction(op_code::right, static_cast<int>(std::distance(iter, next)) + 1, 0);
+				new_tree.add_instruction(op_code::load_const, *next, 0);
 				iter = std::next(next);
 			}
 			--new_tree.front().argument_; //decrese the number of cells the CPR moves due to the first instruction
@@ -188,24 +188,24 @@ namespace bf {
 			for (auto iter = old_tree.begin(), end = std::prev(old_tree.end()); iter != end; ++iter) {
 				instruction const& current = *iter, next = *std::next(iter);
 
-				switch (current.type_) {
-				case instruction_type::inc:
-					if (next.type_ == instruction_type::dec) {
+				switch (current.op_code_) {
+				case op_code::inc:
+					if (next.op_code_ == op_code::dec) {
 						//TODO implement
 					}
 					break;
-				case instruction_type::dec:
-					if (next.type_ == instruction_type::inc) {
+				case op_code::dec:
+					if (next.op_code_ == op_code::inc) {
 
 					}
 					break;
-				case instruction_type::left:
-					if (next.type_ == instruction_type::right) {
+				case op_code::left:
+					if (next.op_code_ == op_code::right) {
 
 					}
 					break;
-				case instruction_type::right:
-					if (next.type_ == instruction_type::left) {
+				case op_code::right:
+					if (next.op_code_ == op_code::left) {
 
 					}
 					break;

@@ -55,7 +55,7 @@ namespace bf::breakpoints {
 		brk_location.breakpoints_here_.insert(new_breakpoint); //insert pointer to this new breakpoint
 		if (brk_location.breakpoints_here_.size() == 1) { //if that's the first breakpoint
 			brk_location.replaced_instruction_ = execution::emulator.instructions_[address]; //save the original instruction
-			execution::emulator.instructions_[address].type_ = instruction_type::breakpoint; //insert a breakpoint instruction to program code
+			execution::emulator.instructions_[address].op_code_ = op_code::breakpoint; //insert a breakpoint instruction to program code
 		}
 		return new_breakpoint;
 	}

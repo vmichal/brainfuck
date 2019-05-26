@@ -678,19 +678,19 @@ namespace bf::data_inspection {
 						stream << std::setw(2) << std::right << (instruction_index == pc_position ? "=>" : "");
 						stream << std::setw(6) << instruction_index++ << "   "; //must be separated, else unsequenced modification of instruction_index
 
-						if (current_instruction->type_ == instruction_type::breakpoint) { //if we encounter a breakpoint, we print the replaced instruction instead
+						if (current_instruction->op_code_ == op_code::breakpoint) { //if we encounter a breakpoint, we print the replaced instruction instead
 							//address of this instruction
 							int const addr = static_cast<int>(std::distance<instruction const*>(execution::emulator.instructions_begin(), current_instruction));
 							instruction const& replaced_instruction = breakpoints::bp_manager.get_replaced_instruction(addr); //the replaced instruction to be printed
 
 							auto const &breakpoints = breakpoints::bp_manager.get_breakpoints(addr); //get all breakpoints located at this address
-							stream << replaced_instruction.type_ << ' ' << std::left << std::setw(12) << replaced_instruction.argument_
+							stream << replaced_instruction.op_code_ << ' ' << std::left << std::setw(12) << replaced_instruction.argument_
 								<< " <= breakpoint" << cli::print_plural(breakpoints.size());
 							for (auto const& bpoint : breakpoints) //and print them 
 								stream << ' ' << bpoint->id_;
 						}
 						else
-							stream << current_instruction->type_ << ' ' << current_instruction->argument_; //normal instructions are simply printed
+							stream << current_instruction->op_code_ << ' ' << current_instruction->argument_; //normal instructions are simply printed
 						stream << '\n';
 					}
 					if (current_instruction == instructions_end) { //if we end printing due to the lask of additional instructions, notify the user

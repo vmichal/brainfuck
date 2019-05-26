@@ -1,6 +1,6 @@
 #pragma once
 
-#include "syntax_tree.h"
+#include "program_code.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -42,11 +42,6 @@ namespace bf {
 		bool ready();
 	};
 
-
-
-	/*Parses the given source code and attempts to construct a syntax_tree. If a syntax error is encountered,
-	returns empty std::optional. If the code is ok, converts all instructions forming a syntax tree without any optimizations.*/
-	std::optional<syntax_tree> generate_syntax_tree(std::string_view const code);
 
 
 	/*Initialization function of cli commands controling compilation. Shall be called only once from main.*/

@@ -73,31 +73,31 @@ namespace bf::execution {
 
 	void cpu_emulator::do_execute(instruction const& instruction) {
 		++executed_instructions_counter_;
-		switch (instruction.type_) {
-		case instruction_type::nop: //no-op
+		switch (instruction.op_code_) {
+		case op_code::nop: //no-op
 			break;
-		case instruction_type::inc: //increase value of cell under the pointer
+		case op_code::inc: //increase value of cell under the pointer
 			*cell_pointer_reg_ += instruction.argument_;
 			break;
-		case instruction_type::dec: //decrease the value of cell under the pointer
+		case op_code::dec: //decrease the value of cell under the pointer
 			*cell_pointer_reg_ -= instruction.argument_;
 			break;
-		case instruction_type::left: //move the pointer to left
+		case op_code::left: //move the pointer to left
 			left(instruction.argument_);
 			break;
-		case instruction_type::right: //move the pointer to right
+		case op_code::right: //move the pointer to right
 			right(instruction.argument_);
 			break;
-		case instruction_type::loop_begin:
+		case op_code::loop_begin:
 			if (*cell_pointer_reg_ == 0) //if value under the pointer is zero, perform jump to the instruction
 				program_counter_ = instruction.argument_; //following the closing brace
 			break;
-		case instruction_type::loop_end: //check value under the pointer. If it's nonzero, jump to the start of this loop
+		case op_code::loop_end: //check value under the pointer. If it's nonzero, jump to the start of this loop
 			if (*cell_pointer_reg_)
 				program_counter_ = instruction.argument_;
 			//the next executed instruction is the one behind opening brace
 			break;
-		case instruction_type::in: //read char from stdin
+		case op_code::in: //read char from stdin
 			if (int const read = emulated_program_stdin_->get(); read == std::char_traits<char>::eof()) {
 				std::cout << "\nEnd of input stream hit.\n";
 				if (stdin_eof_)
@@ -107,19 +107,19 @@ namespace bf::execution {
 			else
 				*cell_pointer_reg_ = static_cast<memory_cell_t>(read);
 			break;
-		case instruction_type::out: //print char to stdout
+		case op_code::out: //print char to stdout
 			emulated_program_stdout_->put(static_cast<char>(*cell_pointer_reg_));
 			break;
-		case instruction_type::breakpoint: //pause the execution due to a breakpoint
+		case op_code::breakpoint: //pause the execution due to a breakpoint
 			--executed_instructions_counter_;
 			flags_register_.breakpoint_hit() = true;
 			break;
-		case instruction_type::load_const:
+		case op_code::load_const:
 			*cell_pointer_reg_ = instruction.argument_;
 			break;
 		default: //die painfully
 			--executed_instructions_counter_;
-			std::cerr << "Unknown instruction " << instruction.type_ << ". Halting.\n";
+			std::cerr << "Unknown instruction " << instruction.op_code_ << ". Halting.\n";
 			halt() = true;
 		}
 

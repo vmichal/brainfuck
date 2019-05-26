@@ -8,6 +8,8 @@
 #include <string_view>
 #include <charconv>
 #include <iomanip>
+#include <stack>
+
 
 namespace bf {
 
@@ -49,32 +51,53 @@ namespace bf {
 		}
 	}
 
-	std::optional<syntax_tree> generate_syntax_tree(std::string_view const code) {
-		if (!perform_syntax_check_quick(code)) //if syntax check fails, return empty optional
-			return std::nullopt;
+	/*The Brainfuck compiler frontend. Converts source code to instructions one by one without any optimizations or analysis. The returned vector is however potentially ready
+	for execution as all jumps in the code get relocated to point to destinations correctly. */
+	std::vector<instruction> convert_code_to_ir(std::string_view const code) {
+		assert(syntax_check_quick_is_ok(code));
 
-		std::optional<syntax_tree> tree{ std::in_place }; //construct syntax_tree in place inside the optional
+		std::vector<instruction> instructions;
+		instructions.reserve(code.size());
 
-		tree->reserve(static_cast<int>(code.size())); //reserve enough space for instructions. They are converted 1:1, therefore entire code.size() may be required
+		std::stack<int> opened_loops; //stack of encountered loop opening instructions; required to keep track of matching braces and proper relocation of jump targets
 
 		int source_offset = -1;
 		for (char source_char : code) { //loop though the code char by char
 			++source_offset;
 			switch (source_char) { //and add new instruction to the tree
-			case '+': tree->add_instruction(instruction_type::inc, 1, source_offset); break;
-			case '-': tree->add_instruction(instruction_type::dec, 1, source_offset); break;
-			case '<': tree->add_instruction(instruction_type::left, 1, source_offset); break;
-			case '>': tree->add_instruction(instruction_type::right, 1, source_offset); break;
-			case ',': tree->add_instruction(instruction_type::in, 0, source_offset); break;
-			case '.': tree->add_instruction(instruction_type::out, 0, source_offset); break;
-				//targets of jumps are left invalid and relocated afterward
-			case ']': tree->add_instruction(instruction_type::loop_end, 0xdead'beef, source_offset); break;
-			case '[': tree->add_instruction(instruction_type::loop_begin, 0xdead'beef, source_offset); break;
+			case '+': instructions.emplace_back(op_code::inc, 1, source_offset);   break;
+			case '-': instructions.emplace_back(op_code::dec, 1, source_offset);   break;
+			case '<': instructions.emplace_back(op_code::left, 1, source_offset);  break;
+			case '>': instructions.emplace_back(op_code::right, 1, source_offset); break;
+			case ',': instructions.emplace_back(op_code::in, 0, source_offset);    break;
+			case '.': instructions.emplace_back(op_code::out, 0, source_offset);   break;
+			case '[':
+				opened_loops.push(instructions.size()); //offset of the new instruction is pushed onto the stack
+				instructions.emplace_back(op_code::loop_begin, 0xdead'beef, source_offset); //placeholder argument. Will be resolved later
+				break;
+			case ']':
+				assert(!opened_loops.empty()); //sanity check - we have already proven that the program is valid, but you know, assertions never killed anybody
+
+				instructions[opened_loops.top()].argument_ = instructions.size() + 1; //argument of the opening brace is the offset of closing brace plus one (CPU jumps one past it)
+				instructions.emplace_back(op_code::loop_end, opened_loops.top() + 1, source_offset); //here we jump again one past the matching brace
+
+				opened_loops.pop(); //close the loop
+				break;
 			}
 		}
-		tree->relocate_jump_targets(); //make sure jumps are correctly relocated
-		return tree;
+		assert(opened_loops.empty()); //sanity check. All loops should have been closed at this point
+
+		return instructions;
 	}
+
+	program_code construct_program(std::vector<instruction> const& instructions) {
+		program_code code;
+
+
+
+		return code;
+	}
+
 
 	namespace {
 
@@ -85,7 +108,7 @@ namespace bf {
 			otherwise only list of errors is saved. Returns true if compilation was OK.*/
 			bool do_compile(std::string code) { //takes code by value, because it is moved later
 
-				if (perform_syntax_check_quick(code)) { //first perform quick scan for errors. If there are none, proceed with compilation
+				if (syntax_check_quick_is_ok(code)) { //first perform quick scan for errors. If there are none, proceed with compilation
 					std::optional<syntax_tree> hopefully_contains_tree = generate_syntax_tree(code);
 					assert(hopefully_contains_tree.has_value()); //must be true, as the code had already undergone a syntax check
 					last_compilation::result = std::make_unique<compilation_result>(std::move(code), std::vector<syntax_error>{},
