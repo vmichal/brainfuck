@@ -8,28 +8,10 @@
 #include <exception>
 #include <cassert>
 
-//Defines static local boolean and asserts that the code is run just once
-#define ASSERT_CALLED_ONCE static bool ___first_time = true; assert(___first_time); ___first_time = false;
-
-//Supplies a default option in a switch for which default option shall be an error
-#define ASSERT_NO_OTHER_OPTION default: assert(false); throw 0;     /*shall not be reached by the control flow*/ 
 
 namespace bf::cli {
 
-
-	//Conditionally print "s" if more than one of something is requested
-	template<typename INT, typename = std::enable_if_t<std::is_integral_v<INT>>>
-	inline constexpr char const *print_plural(INT count, char const * singular, char const * plural) {
-		return count == INT(1) ? singular : plural;
-	}
-
-	template<typename INT, typename = std::enable_if_t<std::is_integral_v<INT>>>
-	inline constexpr char const *print_plural(INT count) {
-		return print_plural(count, "", "s");
-	}
-
-
-	//Categories of commands used for sorting for example when printing help
+	//Categories of commands used for sorting. Used for example when printing help
 	enum class command_category {
 		general, //commands that do not fit anywhere else - quit, help
 		commands, //commands that define or document new commands
@@ -40,32 +22,15 @@ namespace bf::cli {
 		debug, //debugging commands
 		hooks //hooks of other commands
 	};
-	std::ostream& operator<<(std::ostream& str, command_category cat); //Output operator
+	std::ostream& operator<<(std::ostream& str, command_category const cat); //Output operator
 
+	
 
-	/*Splits passed string_view using whitespace as delimiters,
-	removes all additional whitespace and returns tokens in a vector.
-	Strings enclosed in quotes are interpreted as single tokens without splitting.
-	If quotes are left unclosed, function behaves as if the closing quotes were appended.*/
-	std::vector<std::string_view> split_to_tokens(std::string_view const str);
-	/*Splits passed string_view using \n as delimiter and returns all lines.*/
-	std::vector<std::string_view> split_to_lines(std::string_view const str);
-
-	/*Returns string_view of line numbered line_num starting at one within the string str.
-	New-line chars are not included.*/
-	std::string_view get_line(std::string_view const str, int line_num);
-
-	/*Read contents of file into a string and returns it. If file_name does not
-	specify a valid path to file, empty std::optional is returned.*/
-	std::optional<std::string> read_file(std::string_view const file_name);
-
-	/*Checks, whether actual number of parameters including command name is between min and max.
-	In case it is not, prints error message and returns non zero.
-	Returns zero on success, 1 if there are not enough arguments, 2 if there are too many.*/
-	int check_command_argc(int const min, int const max, std::size_t const actual);
+	
 
 	//type of arguments expected by function callbacks for CLI commands
 	using command_parameters_t = std::vector<std::string_view>;
+
 	//type of function callback for CLI commands
 	using callback_t = std::function<int(command_parameters_t const&)>;
 
@@ -77,6 +42,7 @@ namespace bf::cli {
 	/*Searches for cmd_name in list of commands and returns true on sucess.*/
 	bool is_command(std::string const& cmd_name);
 	bool is_command(std::string_view const cmd_name);
+
 	/*Searches internal list of aliases for given string and returns true on success.*/
 	bool is_command_alias(std::string const& alias);
 	bool is_command_alias(std::string_view const cmd_name);
@@ -93,9 +59,10 @@ namespace bf::cli {
 
 
 	/*Takes a line and attempts to execute it.
-	If cmd_line starts with exclamation mark (!), rest of the command is executed by the OS.
+	If cmd_line starts with exclamation mark ('!'), rest of the command is executed by the OS.
 	Otherwise internal map of commands is searched for the given command name. If corresponding
-	command is found it and it's hook get executed. Otherwise prints error message.
+	command is found, it and it's hook are executed. Otherwise prints error message.
+
 	Returned value: if command gets executed by OS, returns value received from OS itself.
 	Otherwise returns value returned by internal command or negative value indicating error.*/
 	int execute_command(std::string cmd_line, bool from_tty);
@@ -121,6 +88,6 @@ namespace bf::cli {
 
 	//prints error message for specified err_code to the standard error stream
 	void print_command_error(command_error const err_code);
-
+	
 
 }

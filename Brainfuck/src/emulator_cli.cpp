@@ -2,7 +2,9 @@
 
 #include "cli.h"
 #include "compiler.h"
+#include "utils.h"
 #include <iostream>
+#include <optional>
 #include <locale>
 #include <charconv>
 #include <fstream>
@@ -11,8 +13,6 @@
 #include <csignal>
 
 namespace bf::execution {
-
-
 
 	namespace {
 
@@ -30,77 +30,62 @@ namespace bf::execution {
 		Expects no arguments. Does a simple check whether there is a program that could be flashed and if there is, does so.
 		After the flash the cpu is reset and has its memory cleared.*/
 		int flash_callback(cli::command_parameters_t const& argv) {
-			if (int const code = cli::check_command_argc(1, 1, argv.size()); code)
+			if (int const code = utils::check_command_argc(1, 1, argv))
 				return code;
-			if (!last_compilation::ready()) {
+			if (!prev_compilation::ready()) {
 				std::cerr << "You must first compile a program. See the \"compilation\" group of commands, especially \"compile\".\n";
 				return 4;
 			}
-			if (!last_compilation::successful()) {
+			if (!prev_compilation::successful()) {
 				std::cerr << "Previous compilation encountered an error. Query its results using the \"compilation\" group of commands or perform a new one.\n"
 					"Illegal code cannot be flashed into the CPU.\n";
 				return 5;
 			}
-			emulator.flash_program(last_compilation::syntax_tree());
+			emulator.flash_program(prev_compilation::generate_executable_code());
 			emulator.reset();
 			std::cout << "Code successfully flashed into the emulator's memory.\n";
 			return 0;
 		}
 
-		/*Wrapper namesapce for helper functions for the run_callback. One does not simply pollute the global namespace of my programs*/
-		namespace run_callback_helper {
-
-			/*Prompts the user that program is being run. Returns true if user decides to restart the program, false otherwise.*/
-			bool prompt_user_wants_restart() {
-				std::cout << "A debugging session is already running. You may discard it, reset the cpu and begin the execution anew.\n"
-					"Would you like to restart the program from the beginning? [Y/N]\n";
-				char input;
-
-				do {
-					std::cin >> input;
-					input = std::toupper(input, std::locale{});
-				} while (input != 'Y' && input != 'N'); //prompt untile the user types something useful
-
-				std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); //flush the new-line from std::cin
-
-				return input == 'Y';
-			}
-		}
-
 		/*A function callback for the run cli command.
 		Does not accept any parameters, checks the state of cpu and provided it's good, resets it and commences the execution.*/
 		int run_callback(cli::command_parameters_t const& argv) {
-			if (int const code = cli::check_command_argc(1, 1, argv.size()); code)
+			if (int const code = utils::check_command_argc(1, 1, argv))
 				return code; //no arguments are expected
 
 			if (!assert_emulator_has_program()) //if there is no program inside the CPU
 				return 5;
 
-			switch (emulator.state()) { //we have to take a with state of cpu in mind
-			case execution_state::interrupted: //CPU had hit a breakpoint or something
-				if (!run_callback_helper::prompt_user_wants_restart())
-					return 0; //if the user does not want to restart the program, just leave
-				[[fallthrough]]; //otherwise continue to the same reset+start code
-			case execution_state::finished: //If the previous execution already ended, reset the CPU
-				emulator.reset();
-				[[fallthrough]];
-			case execution_state::not_started: //if there is no execution in progress
-				emulator.do_execute();
-				return 0;
-			case execution_state::running: //if it is already running
-				std::cerr << "CPU is currently running, stop the execution first.\n";
-				return 3;
-			case execution_state::halted: //if the cpu was shut down due to an error
-				std::cerr << "CPU had been halted.\n";
-				return 4;
-				ASSERT_NO_OTHER_OPTION
+			switch (emulator.state()) { //we have to take the state of cpu in mind
+				case execution_state::interrupted: //CPU had hit a breakpoint or something
+					std::cout << "A debugging session is already running. You may discard it, reset the cpu and begin the execution anew.\n"
+						"Would you like to restart the program from the beginning?\n";
+					if (!utils::prompt_user_yesno())
+						return 0; //if the user does not want to restart the program, just leave
+					[[fallthrough]]; //otherwise continue to the same reset+start code
+				case execution_state::finished: //If the previous execution already ended, reset the CPU
+					emulator.reset();
+					[[fallthrough]];
+				case execution_state::not_started: //if there is no execution in progress
+					emulator.do_execute();
+					return 0;
+				case execution_state::running: //if it is already running
+					std::cerr << "CPU is currently running, stop the execution first.\n";
+					return 3;
+				case execution_state::halted: //if the cpu was shut down due to an error
+					std::cerr << "CPU had been halted.\n";
+					return 4;
+					ASSERT_NO_OTHER_OPTION
 			}
 		}
 
 		/*Function callback for cli command start. Accepts no arguments, sets a temporary breakpoint at the first instruction and runs the CPU.*/
 		int start_callback(cli::command_parameters_t const& argv) {
-			if (int const code = cli::check_command_argc(1, 1, argv.size()))
+			if (int const code = utils::check_command_argc(1, 1, argv))
 				return code;
+
+			//TODO rewrite to call internal functions straight away
+			//TODO add repeat CLI-command that executes previously executed command
 
 			if (int const code = cli::execute_command("tbreak 0", false))
 				return code;
@@ -117,23 +102,27 @@ namespace bf::execution {
 			Returns zero on successful execution, nonzero otherwise.*/
 			int continue_execution() {
 				switch (emulator.state()) { //we have to take a with state of cpu in mind
-				case execution_state::not_started: //if there is no execution in progress
-				case execution_state::finished: //or the execution already ended
-					std::cerr << "No execution is currently interrupted. Start a new program using \"run\" or \"start\".\n";
-					return 3;
-				case execution_state::running: //if it is already running
-					std::cerr << "CPU is currently running.\n";
-					return 4;
-				case execution_state::halted: //if the cpu was shut down due to an error
-					std::cerr << "CPU had been halted.\n";
-					return 5;
-				case execution_state::interrupted: //the only state we can influence. CPU had hit a breakpoint or something
-					emulator.do_execute(); //returns after a single instruction had been executed. Run it count times
-					return 0;
-					ASSERT_NO_OTHER_OPTION
+					case execution_state::not_started: //if there is no execution in progress
+					case execution_state::finished: //or the execution already ended
+						std::cerr << "No execution is currently interrupted. Start a new program using \"run\" or \"start\".\n";
+						return 3;
+					case execution_state::running: //if it is already running
+						std::cerr << "CPU is currently running.\n";
+						return 4;
+					case execution_state::halted: //if the cpu was shut down due to an error
+						std::cerr << "CPU had been halted.\n";
+						return 5;
+					case execution_state::interrupted: //the only state we can influence. CPU had hit a breakpoint or something
+						emulator.do_execute(); //returns when the emulator stops again
+						return 0;
+						ASSERT_NO_OTHER_OPTION
 				}
 			}
 
+			/*Instructs the cpu emulator to execute step_count instructions.
+			Saves previous states of emulator flags suppress_stop_interrupt and single_step and overwrites them to force emulator to stop
+			after each and every instruction. This is done until th specified number of instructions is executed. Stops sooner if an error
+			occures. */
 			int do_perform_steps(int step_count) {
 				assert(step_count > 0);
 				int code = 0;
@@ -141,19 +130,19 @@ namespace bf::execution {
 					saved_step_state = emulator.single_step();
 				emulator.single_step() = true; //set the single_step flag to make each call to continue_execution run just one instruction
 				emulator.suppress_stop_interrupt() = true; //prevent the emulator from fireing "stop" command
-				for (; step_count > 1; --step_count) //run up to step_count times until the call returns non zero value
-					if ((code = step_and_continue_helper::continue_execution())) {
+				for (; step_count > 1; --step_count) //run up to step_count-1 times or until the call returns non zero value
+					if (code = step_and_continue_helper::continue_execution(); code) { //this call now returns after a single instruction
 						cli::execute_command("stop", false);
 						break;
 					}
-				emulator.suppress_stop_interrupt() = saved_interrupt_state;
-				if (!code && step_count)
-					if (code = step_and_continue_helper::continue_execution(); code == 0)
-						--step_count;
-				emulator.single_step() = saved_step_state; //reset normal run behaviour
+				emulator.suppress_stop_interrupt() = saved_interrupt_state; //restore previous means of execution-interruption reporting
+				if (code == 0 && step_count) //if all steps were performed successfully, step one last time. 
+					if (code = step_and_continue_helper::continue_execution(); code == 0) //this call still returns after a single instruction
+						step_count = 0; //all steps ok, no message will be printed
+				emulator.single_step() = saved_step_state; //restore previous set run behaviour of the emulator
 				if (step_count) //if we had to break out, we notify the user that some stuff happened
 					std::cerr << "CPU has rejected further attempts to control it. Remaining " << step_count << " step"
-					<< cli::print_plural(step_count) << " had not been performed.\n";
+					<< utils::print_plural(step_count) << " had not been performed.\n";
 				return code;
 			}
 
@@ -162,7 +151,7 @@ namespace bf::execution {
 		/*Function callback fot the "continue" command. Does not do much, just makes sure arguments are ok and
 		if the cpu finds itself in a valid state, makes it proceed with the execution.*/
 		int continue_callback(cli::command_parameters_t const& argv) {
-			if (int const code = cli::check_command_argc(1, 1, argv.size()); code)
+			if (int const code = utils::check_command_argc(1, 1, argv))
 				return code; //no arguments expected
 
 			if (!assert_emulator_has_program()) //if there is no program, print and return
@@ -174,71 +163,70 @@ namespace bf::execution {
 		/*Callback function for cli step command.
 		Takes an optional positive integer specifying how many instructions shall be executed.*/
 		int step_callback(cli::command_parameters_t const& argv) {
-			if (int const code = cli::check_command_argc(1, 2, argv.size()); code)
+			if (int const code = utils::check_command_argc(1, 2, argv))
 				return code; //expects one optional argument
 
 			if (!assert_emulator_has_program()) //if there is no program, print and return
 				return 6;
 
 			int step_count = 1;
-			if (argv.size() == 2) //if we got an argument, try to parse it
-				if (std::from_chars(argv[1].data(), argv[1].data() + argv[1].size(), step_count).ec != std::errc{}) {
-					cli::print_command_error(cli::command_error::invalid_number_format);
-					return 7; //it wasn't a valid number, return
-				}
-				else if (step_count <= 0) { //step_count must be positive
-					cli::print_command_error(cli::command_error::non_negative_number_expected);
-					return  8;
-				}
+			if (argv.size() == 2u) //if we got an argument, try to parse it
+				if (std::optional<int> const parsed_step_count = utils::parse_positive_argument(argv[1]); parsed_step_count.has_value())
+					step_count = *parsed_step_count;
+				else
+					return 7;
 			return step_and_continue_helper::do_perform_steps(step_count);
 		}
 
 		namespace redirect_command_helper {
 
-			std::filesystem::path stdin_path, stdout_path;
+			std::filesystem::path stdin_path; //Path to the currently used input stream or "debugger's stdin" iff stdin is used 
+			std::filesystem::path stdout_path; //Path to the currently used output stream of "debugger's stdout" iff stdout is used
 
-			/*Helper function printing the paths to which emulated program's iostreams are redirected*/
+		/*Helper function printing the paths to which emulated program's iostreams are redirected*/
 			int print_iostreams_state() {
-				std::cout << "Current state of iostreams available to the emulated program:\n"
-					"STDIN  > " << (emulator.emulated_program_stdin() == &std::cin ? "debugger's stdin" : stdin_path.string())
-					<< "\nSTDOUT > " << (emulator.emulated_program_stdout() == &std::cout ? "debugger's stdout" : stdout_path.string()) << '\n';
+				std::cout << "Current state of input-output streams exposed to the emulated program:\n"
+					"STDIN  > " << stdin_path.string()
+					<< "\nSTDOUT > " << stdout_path.string() << '\n';
+				/*"STDIN  > " << (emulator.emulated_program_stdin() == &std::cin ? "debugger's stdin" : stdin_path.string())
+				<< "\nSTDOUT > " << (emulator.emulated_program_stdout() == &std::cout ? "debugger's stdout" : stdout_path.string()) << '\n';
+				*/
 				return 0;
 			}
 
-			enum class data_stream {
-				none,
+			enum class data_stream_direction {
 				in,
 				out
 			};
 
-			data_stream parse_stream_direction(std::string_view const stream) {
+			std::optional<data_stream_direction> parse_stream_direction(std::string_view const stream) {
 				if (stream.compare("out") == 0)
-					return data_stream::out;
+					return data_stream_direction::out;
 				if (stream.compare("in") == 0)
-					return data_stream::in;
+					return data_stream_direction::in;
 				cli::print_command_error(cli::command_error::argument_not_recognized);
-				return data_stream::none;
+				return std::nullopt;
 			}
 
-			int redirect_stream(data_stream str, std::string_view const new_stream_name) {
-				assert(str != data_stream::none); //sanity check
-				if (str == data_stream::out)
-					emulator.emulated_program_stdout()->flush();
+			int redirect_stream(data_stream_direction const stream_direction, std::string_view const new_stream_name) {
+				if (stream_direction == data_stream_direction::out)
+					emulator.emulated_program_stdout()->flush(); //if we are abour to replace the output stream, we need to flush the old one
 
-				if (new_stream_name.compare("std") == 0) //we will use standard stream
-					switch (str) {
-					case data_stream::in:
-						emulator.emulated_program_stdin() = &std::cin;
-						std::cout << "Successfully redirected input to stdin.\n";
-						return 0;
-					case data_stream::out:
-						emulator.emulated_program_stdout() = &std::cout;
-						std::cout << "Successfully redirected output to stdout.\n";
-						return 0;
+				if (new_stream_name.compare("std") == 0) //the new stream is one of standard ones
+					switch (stream_direction) {
+						case data_stream_direction::in:
+							emulator.emulated_program_stdin() = &std::cin;
+							stdin_path = "debugger's stdin";
+							std::cout << "Successfully redirected input to stdin.\n";
+							return 0;
+						case data_stream_direction::out:
+							emulator.emulated_program_stdout() = &std::cout;
+							stdout_path = "debugger's stdout";
+							std::cout << "Successfully redirected output to stdout.\n";
+							return 0;
+							ASSERT_NO_OTHER_OPTION;
 					}
-
 				//else we redirect to file
-
 
 				std::filesystem::path new_stream = std::filesystem::absolute(new_stream_name);
 
@@ -252,21 +240,21 @@ namespace bf::execution {
 				static std::ifstream file_in;
 				static std::ofstream file_out;
 
-				switch (str) {
-				case data_stream::in:
-					file_in = std::ifstream{ new_stream };
-					emulator.emulated_program_stdin() = &file_in;
-					std::cout << "Successfully redirected input to " << new_stream << '\n';
-					stdin_path = std::move(new_stream);
-					break;
-				case data_stream::out:
-					file_out = std::ofstream{ new_stream };
-					file_out.rdbuf()->pubsetbuf(nullptr, 0); //enable unbuffered output
-					emulator.emulated_program_stdout() = &file_out;
-					std::cout << "Successfully redirected output to " << new_stream << '\n';
-					stdout_path = std::move(new_stream);
-					break;
-					ASSERT_NO_OTHER_OPTION;
+				switch (stream_direction) {
+					case data_stream_direction::in:
+						file_in = std::ifstream{ new_stream };
+						emulator.emulated_program_stdin() = &file_in;
+						std::cout << "Successfully redirected input to " << new_stream << '\n';
+						stdin_path = std::move(new_stream);
+						break;
+					case data_stream_direction::out:
+						file_out = std::ofstream{ new_stream };
+						file_out.rdbuf()->pubsetbuf(nullptr, 0); //enable unbuffered output
+						emulator.emulated_program_stdout() = &file_out;
+						std::cout << "Successfully redirected output to " << new_stream << '\n';
+						stdout_path = std::move(new_stream);
+						break;
+						ASSERT_NO_OTHER_OPTION;
 				}
 				return 0;
 			}
@@ -276,28 +264,28 @@ namespace bf::execution {
 		Accepts two arguments, first one specifying the stream to be altered, the second one naming the stream
 		to which the redirection shall be performed.*/
 		int redirect_callback(cli::command_parameters_t const& argv) {
-			using namespace redirect_command_helper;
-			if (int const code = cli::check_command_argc(1, 3, argv.size()))
+			namespace helper = redirect_command_helper;
+			if (int const code = utils::check_command_argc(1, 3, argv))
 				return code;
 
 			switch (argv.size()) {
-			case 1u:          //we received no args, print info
-				return print_iostreams_state();
-			case 2u:
-				cli::print_command_error(cli::command_error::argument_required);
-				return 6;
-			case 3u:
-				if (data_stream stream = parse_stream_direction(argv[1]); stream == data_stream::none)
-					return 4;
-				else
-					return redirect_stream(stream, argv[2]);
-				ASSERT_NO_OTHER_OPTION;
+				case 1u:          //we received no args, print info
+					return helper::print_iostreams_state();
+				case 2u:
+					cli::print_command_error(cli::command_error::argument_required);
+					return 6;
+				case 3u:
+					if (auto const stream_direction = helper::parse_stream_direction(argv[1]); stream_direction.has_value())
+						return 4;
+					else
+						return helper::redirect_stream(stream_direction.value(), argv[2]);
+					ASSERT_NO_OTHER_OPTION;
 			}
 		}
 
 		/*Function callback for reset cli command. Does nothig else but resets the CPU*/
 		int reset_callback(cli::command_parameters_t const& argv) {
-			if (int const code = cli::check_command_argc(1, 1, argv.size()))
+			if (int const code = utils::check_command_argc(1, 1, argv))
 				return code;
 			emulator.reset();
 			return 0;
@@ -307,7 +295,7 @@ namespace bf::execution {
 		/*Function callback for the cli stop command. Takes no arguments and acts almost as a pseudo command especially
 		useful to call it's hook.*/
 		int stop_callback(cli::command_parameters_t const& argv) {
-			if (int const code = cli::check_command_argc(1, 1, argv.size()))
+			if (int const code = utils::check_command_argc(1, 1, argv))
 				return code;
 
 			if (emulator.state() == execution_state::running)
@@ -317,22 +305,22 @@ namespace bf::execution {
 
 
 		/*Function handler for SIGINT. Clears error flags in standard streams and sets the emulator's os_interrupt flag.*/
-		extern "C" void interrupt_handler(int) {
+		extern "C" void os_interrupt_handler(int) {
 			emulator.os_interrupt() = true;
 			std::cin.clear(); //clear error states of all streams
 			std::cout.clear();
 			std::cerr.clear();
 			std::cout << "Keyboard interrupt detected!\n";
-			std::signal(SIGINT, &interrupt_handler); //register self as handler again, otherwise next SIGINT kills the program
+			std::signal(SIGINT, &os_interrupt_handler); //register self as handler again, otherwise next SIGINT kills the program
 		}
 	}
 
 
 	void initialize() {
-		ASSERT_CALLED_ONCE;
+		ASSERT_CALLED_ONLY_ONCE;
 
 		//register SIGINT handler
-		std::signal(SIGINT, &interrupt_handler);
+		std::signal(SIGINT, &os_interrupt_handler);
 
 		cli::add_command("redirect", cli::command_category::execution, "Redirects stdin and stdout of emulated program.",
 			"Usage: \"redirect\" (\"out\" or \"in\") stream_name\n"

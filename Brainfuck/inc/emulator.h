@@ -1,12 +1,12 @@
 #pragma once
 
-#include "syntax_tree.h"
-#include "memory_state.h"
+#include "program_code.h"
 #include "breakpoint.h"
 
 #include <cstdint>
 #include <ostream>
 #include <iostream>
+#include <array>
 
 namespace bf::execution {
 
@@ -130,10 +130,10 @@ namespace bf::execution {
 
 	private:
 
-		syntax_tree instructions_;
+		std::vector<instruction> instructions_;
 		int program_counter_ = 0, executed_instructions_counter_ = 0;
 		flags_register volatile flags_register_;
-		memory<64, memory_cell_t> memory_;
+		std::array<memory_cell_t, 64> memory_;
 		memory_cell_t* cell_pointer_reg_ = memory_.data();
 		execution_state state_ = execution_state::not_started;
 
@@ -171,7 +171,7 @@ namespace bf::execution {
 		cpu_emulator(cpu_emulator const&) = delete;
 		cpu_emulator(cpu_emulator&&) = delete;
 
-		void flash_program(syntax_tree new_instructions);
+		void flash_program(std::vector<instruction> new_instructions);
 
 		/*Zeroes out memory, resets CPR and PC, in case input is redirected to a disk file, it's reset*/
 		void reset();
@@ -204,11 +204,12 @@ namespace bf::execution {
 		//returns an address of the first element located past the memory's boundaries. Must be untyped due to raw byte manipulations done by some commands
 		void* memory_end() { return memory_.data() + memory_.size(); }
 		void const* memory_end() const { return memory_.data() + memory_.size(); }
+
 		//Returns the value of CPU's CPR. Must be untyped due to raw byte manipulations done by some commands
 		void* cell_pointer() { return cell_pointer_reg_; }
 		void const* cell_pointer() const { return cell_pointer_reg_; }
 		//returns an offset of cpr from the memory's bounds
-		int cell_pointer_offset() const { return static_cast<int>(std::distance(static_cast<unsigned char const*>(memory_begin()), static_cast<unsigned char const*>(cell_pointer()))); }
+		int cell_pointer_register() const { return static_cast<int>(std::distance(static_cast<unsigned char const*>(memory_begin()), static_cast<unsigned char const*>(cell_pointer()))); }
 
 
 

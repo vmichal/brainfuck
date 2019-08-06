@@ -1,6 +1,6 @@
 #pragma once
 
-#include "syntax_tree.h"
+#include "program_code.h"
 
 namespace bf {
 
@@ -33,7 +33,7 @@ namespace bf {
 	/*Perform optimizations on given program.
 	Syntax tree "program" undergoes optimizations specified by the bitfield "optimizations"
 	and new syntax_tree is constructed.*/
-	syntax_tree optimize(syntax_tree program, opt_level_t const optimizations);
+	void perform_optimizations(std::vector<std::shared_ptr<basic_block>> const& program_basic_blocks, opt_level_t const optimizations);
 
 	/*Initialize CLI commands that control the function of optimizer.
 	Shall be called only once.*/

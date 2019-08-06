@@ -11,15 +11,15 @@ namespace bf::execution {
 
 	void cpu_emulator::breakpoint_interrupt_handler() {
 		flags_register_.breakpoint_hit() = true; //set flag to interrupt execution
-		if (breakpoints::bp_manager.should_ignore_breakpoints(program_counter_)) {
+		if (breakpoints::bp_manager.should_ignore_breakpoints_at(program_counter_)) {
 			flags_register_.breakpoint_hit() = false; //if breakpoints shall be ignored, proceed and before that
-			do_execute(breakpoints::bp_manager.get_replaced_instruction(program_counter_++)); //execute the replaced instruction 
+			do_execute(breakpoints::bp_manager.get_replaced_instruction_at(program_counter_++)); //execute the replaced instruction 
 		}
 		else //otherwise break completely performing further operations requested by the breakpoints
-			breakpoints::bp_manager.handle_breakpoints(program_counter_);
+			breakpoints::bp_manager.handle_breakpoints_at(program_counter_);
 	}
 
-	void cpu_emulator::flash_program(syntax_tree new_instructions) {
+	void cpu_emulator::flash_program(std::vector<instruction> new_instructions) {
 		instructions_ = std::move(new_instructions);
 		breakpoints::bp_manager.clear_all();
 	}
@@ -44,7 +44,9 @@ namespace bf::execution {
 	void cpu_emulator::reset() {
 		program_counter_ = 0;
 		executed_instructions_counter_ = 0;
-		memory_.reset();
+
+		std::memset(memory_.data(), 0, sizeof(memory_));
+
 		flags_register_.reset();
 		cell_pointer_reg_ = memory_.data();
 		state_ = execution_state::not_started;
@@ -73,31 +75,29 @@ namespace bf::execution {
 
 	void cpu_emulator::do_execute(instruction const& instruction) {
 		++executed_instructions_counter_;
-		switch (instruction.type_) {
-		case instruction_type::nop: //no-op
+		switch (instruction.op_code_) {
+		case op_code::nop: //no-op
 			break;
-		case instruction_type::inc: //increase value of cell under the pointer
+		case op_code::inc: //increase value of cell under the pointer
 			*cell_pointer_reg_ += instruction.argument_;
 			break;
-		case instruction_type::dec: //decrease the value of cell under the pointer
+		case op_code::dec: //decrease the value of cell under the pointer
 			*cell_pointer_reg_ -= instruction.argument_;
 			break;
-		case instruction_type::left: //move the pointer to left
+		case op_code::left: //move the pointer to left
 			left(instruction.argument_);
 			break;
-		case instruction_type::right: //move the pointer to right
+		case op_code::right: //move the pointer to right
 			right(instruction.argument_);
 			break;
-		case instruction_type::loop_begin:
-			if (*cell_pointer_reg_ == 0) //if value under the pointer is zero, perform jump to the instruction
-				program_counter_ = instruction.argument_; //following the closing brace
+		case op_code::jump: //TODO set it correctly, right now destination_ points to label
+			program_counter_ = instruction.destination_; //unconditionally jump to destination
 			break;
-		case instruction_type::loop_end: //check value under the pointer. If it's nonzero, jump to the start of this loop
+		case op_code::jump_not_zero: //check value under the pointer. If it's nonzero, jump to the destination
 			if (*cell_pointer_reg_)
-				program_counter_ = instruction.argument_;
-			//the next executed instruction is the one behind opening brace
+				program_counter_ = instruction.destination_; //TODO same as for op_code::jump
 			break;
-		case instruction_type::in: //read char from stdin
+		case op_code::read: //read char from stdin
 			if (int const read = emulated_program_stdin_->get(); read == std::char_traits<char>::eof()) {
 				std::cout << "\nEnd of input stream hit.\n";
 				if (stdin_eof_)
@@ -107,19 +107,19 @@ namespace bf::execution {
 			else
 				*cell_pointer_reg_ = static_cast<memory_cell_t>(read);
 			break;
-		case instruction_type::out: //print char to stdout
+		case op_code::write: //print char to stdout
 			emulated_program_stdout_->put(static_cast<char>(*cell_pointer_reg_));
 			break;
-		case instruction_type::breakpoint: //pause the execution due to a breakpoint
+		case op_code::breakpoint: //pause the execution due to a breakpoint
 			--executed_instructions_counter_;
 			flags_register_.breakpoint_hit() = true;
 			break;
-		case instruction_type::load_const:
+		case op_code::load_const:
 			*cell_pointer_reg_ = instruction.argument_;
 			break;
 		default: //die painfully
 			--executed_instructions_counter_;
-			std::cerr << "Unknown instruction " << instruction.type_ << ". Halting.\n";
+			std::cerr << "Unknown instruction " << instruction.op_code_ << " at offset " << instruction.source_offset_ << ". Halting.\n";
 			halt() = true;
 		}
 
@@ -146,8 +146,8 @@ namespace bf::execution {
 		flags_register_.os_interrupt() = false;
 		if (flags_register_.breakpoint_hit()) {  //we continue after a breakpoint, PC is pointing to the BP's address. First execute the substituted instruction
 			flags_register_.breakpoint_hit() = false;
-			if (breakpoints::bp_manager.breakpoint_count(program_counter_))
-				do_execute(breakpoints::bp_manager.get_replaced_instruction(program_counter_++));
+			if (breakpoints::bp_manager.count_breakpoints_at(program_counter_))
+				do_execute(breakpoints::bp_manager.get_replaced_instruction_at(program_counter_++));
 			else
 				do_execute(instructions_[program_counter_++]);
 			if (flags_register_.single_step())
