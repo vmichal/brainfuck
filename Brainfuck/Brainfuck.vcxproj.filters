@@ -45,12 +45,12 @@
     <ClCompile Include="src\program_code.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="inc\cli.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="inc\memory_state.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="inc\optimizer.h">
@@ -72,6 +72,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="inc\program_code.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

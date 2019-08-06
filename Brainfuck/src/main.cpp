@@ -1,3 +1,6 @@
+
+
+
 #include <iostream>
 
 #include "emulator.h"
@@ -10,7 +13,7 @@
 
 namespace bf {
 
-	void initialize_commands(){
+	void initialize_commands() {
 		cli::initialize();
 		execution::initialize();
 		compiler_initialize();
@@ -21,7 +24,7 @@ namespace bf {
 }
 
 
-int main(int argc, char **argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
 	std::ios::sync_with_stdio(false);
 
 	bf::initialize_commands();

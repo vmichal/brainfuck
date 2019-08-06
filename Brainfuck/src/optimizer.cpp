@@ -1,6 +1,7 @@
 #include "optimizer.h"
 #include "cli.h"
 #include "compiler.h"
+#include "utils.h"
 #include "emulator.h"
 #include <iostream>
 #include <algorithm>
@@ -30,25 +31,23 @@ namespace bf {
 		constexpr optimization_t operator|(optimization_t const a, optimization_t const b) {
 			return static_cast<optimization_t>(static_cast<unsigned>(a) | static_cast<unsigned>(b));
 		}
-		constexpr optimization_t& operator|=(optimization_t & a, optimization_t const b) {
+		constexpr optimization_t& operator|=(optimization_t& a, optimization_t const b) {
 			return a = a | b;
 		}
 		constexpr optimization_t operator&(optimization_t const a, optimization_t const b) {
 			return static_cast<optimization_t>(static_cast<unsigned>(a) & static_cast<unsigned>(b));
 		}
-		constexpr optimization_t& operator&=(optimization_t & a, optimization_t const b) {
+		constexpr optimization_t& operator&=(optimization_t& a, optimization_t const b) {
 			return a = a & b;
 		}
 		constexpr optimization_t operator^(optimization_t const a, optimization_t const b) {
 			return static_cast<optimization_t>(static_cast<unsigned>(a) ^ static_cast<unsigned>(b));
 		}
-		constexpr optimization_t& operator^=(optimization_t & a, optimization_t const b) {
+		constexpr optimization_t& operator^=(optimization_t& a, optimization_t const b) {
 			return a = a ^ b;
 		}
 
 	}
-
-
 
 	namespace {
 
@@ -56,42 +55,49 @@ namespace bf {
 		operations which do the same. New tree of optimized code is returned.
 		Traverses the given source code instruction by instruction, if there are multiple identical instructions
 		next to each other, folds them to one.*/
-		syntax_tree fold_operations(syntax_tree const& old_tree) {
+		void fold_operations(std::vector<std::shared_ptr<basic_block>>& basic_blocks) {
 			std::cout << "Folding operations...\n";
 
-			syntax_tree new_tree;
-
-			int folds_performed = 0;
+			int fold_counter = 0;
 
 			//for loop itself does not advance the iterator, the old tree is traversed by while-lop inside
-			for (auto iter = old_tree.begin(), end = old_tree.end(); iter != end;) {
-				if (!iter->is_foldable()) {
-					//if current instruction is jump, IO or breakpoint, nothing can be folded
-					new_tree.add_instruction(*iter);
-					++iter;
-					continue;
+			for (std::shared_ptr<basic_block>& block : basic_blocks) {
+
+				auto new_iter = std::find_if(block->ops_.begin(), block->ops_.end(),
+					[](instruction const& instruction) -> bool {return instruction.is_foldable(); });
+				for (auto iter = new_iter, end = block->ops_.end(); iter != end;) {
+					if (!iter->is_foldable()) {
+						//if current instruction is jump, io, breakpoint and so on, nothing can be folded
+						*new_iter = *iter;
+						++new_iter, ++iter;
+						continue;
+					}
+
+					auto const consecutive_range_start = iter;
+					//while instructions have same type, advance iterator
+					iter = std::find_if(std::next(iter), end,
+						[current_op_code = iter->op_code_](instruction const& i) {return i.op_code_ != current_op_code; });
+					std::ptrdiff_t const distance = std::distance(consecutive_range_start, iter); //number of instruction to be folded
+					if (distance > 1) {//if we are folding, print message
+						//TODO print some message to see how many optimizations were done
+						++fold_counter;
+					}
+					//add instruction of same type and offset as the first instruction of block. Argument is the number of consecutive instructions
+					new_iter->op_code_ = consecutive_range_start->op_code_;
+					new_iter->source_offset_ = consecutive_range_start->source_offset_;
+					new_iter->argument_ = distance;
 				}
-				auto const current = iter;
-				//while instructions have same type, advance iterator
-				iter = std::find_if(++iter, end, [&current](instruction const& i) {return i.op_code_ != current->op_code_; });
-				int const distance = static_cast<int>(std::distance(current, iter)); //number of instruction to be folded
-				if (distance > 1) {//if we are folding, print message
-					std::cout << "Folding " << distance << ' ' << current->op_code_ << " instructions ("
-						<< std::distance(old_tree.begin(), current) << '-' << std::distance(old_tree.begin(), iter) - 1
-						<< ") => " << new_tree.size() << ".\n";
-					++folds_performed;
-				}
-				//add instruction of same type and offset as the first instruction of block. Argument is the number of consecutive instructions
-				new_tree.add_instruction(current->op_code_, distance, current->source_offset_);
 			}
 			std::cout << "Folding finished.\n";
-			new_tree.relocate_jump_targets(); //make sure jumps in the new tree are correctly located
-			return new_tree;
 		}
 
+		//TODO for now speculative execution had been postponed as it requires an extraordinary effort to perform
+#if 0
 		/*First we need to find out, how much code is executed independently on IO operations. This part will be executed by the local emulator.
 		This function does exactly that - takes source code for the program and decides, which parts shall be executed at compile-time.*/
-		syntax_tree prepare_speculative_execution_code(syntax_tree const& old_tree) {
+		void prepare_speculative_execution_code(std::vector<std::shared_ptr<basic_block>> & basic_blocks) {
+			//TODO implement speculative execution
+
 
 			//the last instuction that could possibly be executed by the speculative execution
 			auto const first_io_operation = std::find_if(old_tree.begin(), old_tree.end(), [](instruction const& i) { return i.is_io(); });
@@ -100,12 +106,12 @@ namespace bf {
 
 			//traverse the code pushing opened loops on the stack until an IO operation is encountered
 			std::stack<std::vector<instruction>::const_iterator> opened_loops;
-			for (auto iter = old_tree.begin(); iter != first_io_operation; ++iter)
+			for (auto iter = old_tree.cbegin(); iter != first_io_operation; ++iter)
 				switch (iter->op_code_) {
-				case op_code::loop_begin:
+				case op_code::jump:
 					opened_loops.push(iter);
 					break;
-				case op_code::loop_end:
+				case op_code::jump_not_zero:
 					assert(!opened_loops.empty());
 					opened_loops.pop();
 					break;
@@ -127,7 +133,7 @@ namespace bf {
 			return speculative_execution_code;
 		}
 
-		syntax_tree precalculate_cell_values(execution::cpu_emulator & speculative_emulator, syntax_tree const& old_tree) {
+		syntax_tree precalculate_cell_values(execution::cpu_emulator& speculative_emulator, syntax_tree const& old_tree) {
 			assert(speculative_emulator.has_program()); //sanity check that this function is not called from elsewhere
 			assert(speculative_emulator.state() == execution::execution_state::not_started);
 
@@ -139,12 +145,12 @@ namespace bf {
 
 			using cell_t = execution::cpu_emulator::memory_cell_t;
 			//save the state of emulator's memory in the form of load_const instructions
-			for (cell_t * iter = static_cast<cell_t*>(speculative_emulator.memory_begin()), *end = static_cast<cell_t*>(speculative_emulator.memory_end());;) {
-				cell_t *next = std::find_if(iter, end, [](cell_t cell) {return cell != 0; }); //find the next nonzero cell
+			for (cell_t* iter = static_cast<cell_t*>(speculative_emulator.memory_begin()), *end = static_cast<cell_t*>(speculative_emulator.memory_end());;) {
+				cell_t* next = std::find_if(iter, end, [](cell_t cell) {return cell != 0; }); //find the next nonzero cell
 				if (next == end) { //if we run out of cells, move the CPR to the desired position within the memory as if the code had been run normally
 					new_tree.add_instruction(op_code::right,
 						static_cast<int>(std::distance(iter, static_cast<cell_t*>(speculative_emulator.memory_end())))
-						+ speculative_emulator.cell_pointer_offset() + 1, 0);
+						+ speculative_emulator.cell_pointer_register() + 1, 0);
 					break;
 				}
 				//emit instructions to traverse emulator's memory and load constants
@@ -160,7 +166,7 @@ namespace bf {
 		/*Function performing optimizations on passed syntax_tree by propagting constants wherever possible.
 		New tree of optimized code is returned. Traverses the given source code instruction by instruction,
 		speculatively executes and if the engine finds out that some value is a constant, eliminates all additional operations.*/
-		syntax_tree propagate_consts(syntax_tree const &old_tree) {
+		syntax_tree propagate_consts(syntax_tree const& old_tree) {
 			std::cout << "Propagating const...\n";
 
 			std::unique_ptr<execution::cpu_emulator> speculative_emulator = std::make_unique<execution::cpu_emulator>(); // we set up local emulator to preserve the global state
@@ -174,12 +180,13 @@ namespace bf {
 			new_tree.relocate_jump_targets();
 
 			std::cout << "In summary execution of " << speculative_emulator->executed_instructions_counter() << " instruction"
-				<< cli::print_plural(speculative_emulator->executed_instructions_counter())
+				<< utils::print_plural(speculative_emulator->executed_instructions_counter())
 				<< " will be prevented by the means of const propagation.\n";
 			return new_tree;
 		}
 
-		syntax_tree eliminate_dead_code(syntax_tree const& old_tree) {
+		void eliminate_dead_code(std::vector<std::shared_ptr<basic_block>> & basic_blocks) {
+			//TODO implement
 			std::cout << "Eliminating dead code...\n";
 
 			syntax_tree new_tree;
@@ -191,7 +198,6 @@ namespace bf {
 				switch (current.op_code_) {
 				case op_code::inc:
 					if (next.op_code_ == op_code::dec) {
-						//TODO implement
 					}
 					break;
 				case op_code::dec:
@@ -213,38 +219,41 @@ namespace bf {
 				}
 			}
 
-			std::cout << "Dead code elimination ended, " << eliminated_instructions << " instruction" << cli::print_plural(eliminated_instructions) << " eliminated.\n";
+			std::cout << "Dead code elimination ended, " << eliminated_instructions << " instruction" << utils::print_plural(eliminated_instructions) << " eliminated.\n";
 			new_tree.relocate_jump_targets();
 			return new_tree;
 		}
 
-		syntax_tree loop_analysis(syntax_tree const& old_tree) {
+
+		void loop_analysis(std::vector<std::shared_ptr<basic_block>>& program) {
 			//TODO implement
-			return old_tree;
 		}
+#endif
 	}
 
 
-	syntax_tree optimize(syntax_tree source_tree, opt_level_t const opt_level) {
+	void perform_optimizations(std::vector<std::shared_ptr<basic_block>>& program, opt_level_t const opt_level) {
 		std::cout << "optimizing\n";
 
 		if (opt_level & optimizations::op_folding) //folding of operations was requested
-			source_tree = fold_operations(source_tree);
+			fold_operations(program);
 
+#if 0
 		if (opt_level & optimizations::loop_analysis)
-			source_tree = loop_analysis(source_tree);
+			loop_analysis(program);
 
 		if (opt_level & optimizations::dead_code_elimination)
-			source_tree = eliminate_dead_code(source_tree);
+			eliminate_dead_code(program);
+
 
 		if (opt_level & optimizations::const_propagation)
-			source_tree = propagate_consts(source_tree);
+			propagate_consts(program);
 
+#endif
 
 		//TODO opportunity to add other optimizations
 
-		std::cout << "end of otimizations\n";
-		return source_tree;
+		std::cout << "end of optimizations\n";
 	}
 
 	namespace {
@@ -252,7 +261,7 @@ namespace bf {
 		/*Function callback for the "optimize" cli command. Parses its arguments as optimization flags
 		and then performs specified optimizations on the result of previous compilation.*/
 		int optimize_callback(cli::command_parameters_t const& argv) {
-			if (int const code = cli::check_command_argc(2, std::numeric_limits<int>::max(), argv.size()); code)
+			if (int const code = utils::check_command_argc(2, std::numeric_limits<int>::max(), argv))
 				return code;
 
 			if (!last_compilation::ready()) {
@@ -270,9 +279,7 @@ namespace bf {
 				else
 					opt_level |= tmp;
 
-			syntax_tree & tree = last_compilation::syntax_tree();
-
-			optimize(tree, opt_level).swap(tree);
+			perform_optimizations(last_compilation::basic_blocks_mutable(), opt_level);
 
 			return 0;
 		}
@@ -281,7 +288,7 @@ namespace bf {
 
 
 	void optimizer_initialize() {
-		ASSERT_CALLED_ONCE;
+		ASSERT_CALLED_ONLY_ONCE;
 		cli::add_command("optimize", cli::command_category::optimization, "Optimizes compiled program's code.",
 			"Usage: \"optimize\" optimizations...\n"
 			"Performs specified optimizations on the saved program. Accepts unlimited number of arguments which specify all the\n"

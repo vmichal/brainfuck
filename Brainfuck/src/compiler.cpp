@@ -1,18 +1,34 @@
 #include "compiler.h"
 #include "syntax_check.h"
 #include "cli.h"
+#include "utils.h"
 
+#include <execution>
 #include <iostream>
-#include <algorithm>
+#include <numeric>
+#include <map>
 #include <cassert>
+#include <algorithm>
 #include <string_view>
 #include <charconv>
 #include <iomanip>
 #include <stack>
 
-
 namespace bf {
 
+
+	/*Structure containing information about the result of a compilation; Mainly vector of syntax errors
+	and optionally syntax_tree provided compilation was successful are present.*/
+	struct compilation_result {
+		std::string source_code_; //code that has been compiled
+		std::vector<syntax_error> syntax_errors_; //vector of encountered syntax_errors
+		std::vector<std::shared_ptr<basic_block>> basic_blocks_; //compiled code. Holds value iff syntax_errors_ is empty
+
+		template<typename A, typename B, typename C>
+		compilation_result(A&& source_code, B&& syntax_errors, C&& basic_blocks) noexcept
+			: source_code_(std::forward<A&&>(source_code)), syntax_errors_(std::forward<B&&>(syntax_errors)), basic_blocks_(std::forward<C&&>(basic_blocks))
+		{}
+	};
 
 	namespace last_compilation {
 
@@ -20,30 +36,46 @@ namespace bf {
 		until then contains nullptr.*/
 		std::unique_ptr<compilation_result> result;
 
-		std::string &code() {
+		std::string& source_code() {
 			assert(ready());
-			return result->code_;
+			return result->source_code_;
 		}
 
-		std::vector<syntax_error> & errors() {
+		std::vector<syntax_error>& syntax_errors() {
 			assert(ready());
-			return result->errors_;
+			return result->syntax_errors_;
 		}
 
-		std::optional<::bf::syntax_tree> & syntax_tree_opt() {
+		std::vector<instruction> generate_executable_code() {
 			assert(ready());
-			return result->syntax_tree_;
+
+			std::vector<instruction> res;
+			res.reserve(std::accumulate(result->basic_blocks_.begin(), result->basic_blocks_.end(), 0,
+				[](int const tmp, std::shared_ptr<basic_block> const& block) {
+					return tmp + block->ops_.size();
+				}));
+
+
+			for (auto const& block : result->basic_blocks_)
+				res.insert(res.end(), block->ops_.begin(), block->ops_.end());
+
+			return res;
 		}
 
-		bf::syntax_tree & syntax_tree() {
+		std::vector<std::shared_ptr<basic_block>> const& basic_blocks() {
 			assert(ready());
-			return result->syntax_tree_.value();
+			return result->basic_blocks_;
+		}
+
+		std::vector<std::shared_ptr<basic_block>>& basic_blocks_mutable() {
+			assert(ready());
+			return result->basic_blocks_;
 		}
 
 		bool successful() {
 			assert(ready());
-			assert(result->errors_.empty() == result->syntax_tree_.has_value());
-			return result->syntax_tree_.has_value();
+			assert(result->syntax_errors_.empty() == !result->basic_blocks_.empty());
+			return !result->basic_blocks_.empty();
 		}
 
 		bool ready() {
@@ -51,53 +83,237 @@ namespace bf {
 		}
 	}
 
-	/*The Brainfuck compiler frontend. Converts source code to instructions one by one without any optimizations or analysis. The returned vector is however potentially ready
-	for execution as all jumps in the code get relocated to point to destinations correctly. */
-	std::vector<instruction> convert_code_to_ir(std::string_view const code) {
-		assert(syntax_check_quick_is_ok(code));
+	class compiler {
 
-		std::vector<instruction> instructions;
-		instructions.reserve(code.size());
+		std::vector<instruction> instructions_;
+		std::vector<instruction const*> labels_; //addresses of labels (jump targets)
+		std::vector<instruction*> jumps_; //vector of pointers to jump instructions
 
-		std::stack<int> opened_loops; //stack of encountered loop opening instructions; required to keep track of matching braces and proper relocation of jump targets
-
-		int source_offset = -1;
-		for (char source_char : code) { //loop though the code char by char
-			++source_offset;
-			switch (source_char) { //and add new instruction to the tree
-			case '+': instructions.emplace_back(op_code::inc, 1, source_offset);   break;
-			case '-': instructions.emplace_back(op_code::dec, 1, source_offset);   break;
-			case '<': instructions.emplace_back(op_code::left, 1, source_offset);  break;
-			case '>': instructions.emplace_back(op_code::right, 1, source_offset); break;
-			case ',': instructions.emplace_back(op_code::in, 0, source_offset);    break;
-			case '.': instructions.emplace_back(op_code::out, 0, source_offset);   break;
-			case '[':
-				opened_loops.push(instructions.size()); //offset of the new instruction is pushed onto the stack
-				instructions.emplace_back(op_code::loop_begin, 0xdead'beef, source_offset); //placeholder argument. Will be resolved later
-				break;
-			case ']':
-				assert(!opened_loops.empty()); //sanity check - we have already proven that the program is valid, but you know, assertions never killed anybody
-
-				instructions[opened_loops.top()].argument_ = instructions.size() + 1; //argument of the opening brace is the offset of closing brace plus one (CPU jumps one past it)
-				instructions.emplace_back(op_code::loop_end, opened_loops.top() + 1, source_offset); //here we jump again one past the matching brace
-
-				opened_loops.pop(); //close the loop
-				break;
-			}
+		/*Performs cleanup of data stored from the previous compilation and prepares the object to compile new code.*/
+		void reset_compiler_state() {
+			instructions_.clear();
+			jumps_.clear();
+			labels_.clear();
 		}
-		assert(opened_loops.empty()); //sanity check. All loops should have been closed at this point
-
-		return instructions;
-	}
-
-	program_code construct_program(std::vector<instruction> const& instructions) {
-		program_code code;
 
 
+		/*The Brainfuck compiler frontend. Converts source code to instructions one by one without any optimizations or analysis. The returned vector is however potentially ready
+		for execution as all jumps in the code get relocated to point to destinations correctly. */
+		void generate_intermediate_code(std::string_view const source_code) {
+			//invalid source code cannot appear here; it must be tested against functions from the syntax_check.h header
+			assert(syntax_validation_is_ok(source_code)); //one more test for the validity of the program
 
-		return code;
-	}
+			instructions_.reserve(2 + source_code.size()); //reserve enough space for all instructions and program prologue and epilogue
+			instructions_.emplace_back(op_code::program_entry, 1, -1); //the prologue - program's entry instruction
 
+			for (int source_offset = 0; source_offset != source_code.size(); ++source_offset)  //loop though the code char by char
+				switch (source_code[source_offset]) { //and add a new instruction if the char is a command
+				case '+': instructions_.emplace_back(op_code::inc, 1, source_offset);	  break;
+				case '-': instructions_.emplace_back(op_code::dec, 1, source_offset);	  break;
+				case '<': instructions_.emplace_back(op_code::left, 1, source_offset);	  break;
+				case '>': instructions_.emplace_back(op_code::right, 1, source_offset);	  break;
+				case ',': instructions_.emplace_back(op_code::read, 0, source_offset);    break;
+				case '.': instructions_.emplace_back(op_code::write, 0, source_offset);   break;
+				case '[':
+					instructions_.emplace_back(op_code::jump, 0xdead'beef, source_offset); //Argument will be resolved later
+					jumps_.push_back(&instructions_.back());
+					break;
+				case ']':
+					instructions_.emplace_back(op_code::jump_not_zero, 0xdead'beef, source_offset);
+					jumps_.push_back(&instructions_.back());
+					break;
+					//any other characater is only a comment so we ignore it
+				}
+
+			instructions_.emplace_back(op_code::program_exit, 1, -1); //the epilogue of the program
+			assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
+		}
+
+		/*Identifies labels in the generated intermediate code and prepares this information for usage during the construction of basic blocks.*/
+		void identify_labels() {
+
+			assert(instructions_.size() >= 2); //at least program_entry and program_exit must be present
+			//make sure that the generated source_code has proper format
+			assert(instructions_.front().op_code_ == op_code::program_entry && instructions_.back().op_code_ == op_code::program_exit);
+			assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
+			assert(std::all_of(jumps_.begin(), jumps_.end(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
+
+			/*Each label marks a single leader. Leaders of basic blocks are found by applying the following algorithm:
+				1) The first instruction is a leader.
+				2) Conditional jumps at closing brace are leaders of their own single instruction blocks
+				3) Instructions after opening brackets are leaders of the loop body.
+				*/
+
+				//For unconditional jumps, their destination (conditional jump) is a leader 
+				//For conditional jumps, their destination (unconditional jump) and well as the instruction after them (fallthrough) are leaders
+				//Two additional labels for program_entry and one past program_exit instructions
+			labels_.reserve(jumps_.size() + jumps_.size() / 2 + 2);
+
+			labels_.push_back(&instructions_.front()); //the entry instruction is a leader
+
+
+			for (instruction const* const jump : jumps_)  //see comment five lines above
+				if (jump->op_code_ == op_code::jump)
+					labels_.push_back(jump + 1);
+				else if (jump->op_code_ == op_code::jump_not_zero) {
+					labels_.push_back(jump);
+					labels_.push_back(jump + 1);
+				}
+				else
+					MUST_NOT_BE_REACHED;
+
+			labels_.push_back(&instructions_.back() + 1); //one more label pointign at the past the end instruction
+			assert(labels_.size() == labels_.capacity()); //all precalculated capacity should have been filled
+
+			//there may be multiple labels on the same instruction with this code (two ']' in a row)
+			auto const unique_end = std::unique(labels_.begin(), labels_.end()); //remove multiple labels on the same instruction (may happen because of an empty loop)
+			labels_.resize(std::distance(labels_.begin(), unique_end)); //remove trailing elements
+
+
+		}
+
+		void resolve_jump_targets() const {
+			assert(instructions_.size() >= 2); //at least program_entry and program_exit must be present
+			//make sure that the generated source_code has proper format
+			assert(instructions_.front().op_code_ == op_code::program_entry && instructions_.back().op_code_ == op_code::program_exit);
+			assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
+			assert(std::all_of(std::execution::par_unseq, jumps_.begin(), jumps_.end(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
+			//assert that all jump instructions are contained in the jumps_ vector
+			assert(jumps_.size() == std::count_if(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump(); }));
+			assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [this](instruction const& i) {return i.is_jump() ? std::find(jumps_.begin(), jumps_.end(), &i) != jumps_.end() : true; }));
+
+			//we have a std::vector<instruction *> containing jump instructions
+			//and a std::vector<instruction *> with labels. Element at labels_[i] is the address of instruction under the i-th label
+
+			//number of the next label to be processed. Start at one (it is incremented after the loop body)
+			auto next_label = labels_.cbegin();
+			std::stack<std::pair<instruction*, int>> opened_loops; //pair of (pointer to the unconditional jump, number of label pointing to the following instruction)
+
+			for (instruction* const jump : jumps_)
+				switch (jump->op_code_) { //for each jump instruction perform an operation
+				case op_code::jump:   //for opening brace instructions (the unconditional jump):
+					next_label = std::find(next_label, labels_.cend(), jump + 1);
+					assert(next_label != labels_.cend());
+					opened_loops.emplace(jump, std::distance(labels_.begin(), next_label)); //push the address of this jump instruction and the corresponding label's index. 
+					break;
+
+				case op_code::jump_not_zero:
+				{
+					assert(!opened_loops.empty()); //in valid code there must be some loop still left unlosed
+					next_label = std::find(next_label, labels_.cend(), jump);
+					assert(next_label != labels_.cend());
+					auto const [uncond_jump, target_label_for_cj] = opened_loops.top();
+
+					//The destination for conditional jump from the closing brace is the label at the instruction following the opening brace
+					jump->destination_ = target_label_for_cj;
+
+					//The destination for unconditional jump from the opening brace is the label at the closing brace
+					uncond_jump->destination_ = static_cast<int>(std::distance(labels_.cbegin(), next_label));
+
+
+					opened_loops.pop();   //Must be the last statement, because structured binding to tuple-like structure introduces references! Otherwise dangling reference
+					break;
+				}
+				ASSERT_NO_OTHER_OPTION;
+				}
+
+			//all instructions must have their destination different from 0xdead'beef placeholder value
+			assert(std::none_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump() ? i.destination_ == 0xdead'beef : false; }));
+		}
+
+		std::vector<std::shared_ptr<basic_block>> construct_program_blocks() const {
+			{ //A lot of samity checks...
+				assert(labels_.size() >= 2); //at least two labels must exist (entry one and the one past the end)
+				assert(instructions_.size() >= 2); //at least program_entry and program_exit must be present
+				//make sure that the generated source_code has proper format
+				assert(instructions_.front().op_code_ == op_code::program_entry && instructions_.back().op_code_ == op_code::program_exit);
+				assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
+				assert(std::all_of(std::execution::par_unseq, jumps_.begin(), jumps_.end(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
+				//assert that all jump instructions are contained in the jumps_ vector
+				assert(jumps_.size() == std::count_if(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump(); }));
+				assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [this](instruction const& i) {return i.is_jump() ? std::find(jumps_.begin(), jumps_.end(), &i) != jumps_.end() : true; }));
+				//all instructions must have their destination different from 0xdead'beef placeholder value
+				assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump() ? i.destination_ != 0xdead'beef : true; }));
+			}
+
+			std::vector<std::shared_ptr<basic_block>> basic_blocks;
+			basic_blocks.reserve(labels_.size() - 1);
+
+			for (int index = 0; index < labels_.size() - 1; ++index)
+				basic_blocks.emplace_back(std::make_shared<basic_block>(index,
+					std::vector(labels_[index], labels_[index + 1]), //instructions 
+					std::vector<std::shared_ptr<basic_block>>{}, //predecessors
+					nullptr, nullptr)); //natural and jump successor
+
+
+			for (int i = 0; i < basic_blocks.size()-1; ++i)
+				switch (auto const& last_instruction = basic_blocks[i]->ops_.back(); last_instruction.op_code_) {
+				case op_code::jump:
+				case op_code::jump_not_zero:
+
+					basic_blocks[i]->jump_successor_ = basic_blocks[last_instruction.destination_];
+					basic_blocks[last_instruction.destination_]->predecessors_.push_back(basic_blocks[i]);
+
+					if (last_instruction.op_code_ == op_code::jump)
+						break;
+
+				default:
+					basic_blocks[i]->natural_successor_ = basic_blocks[i + 1];
+					basic_blocks[i + 1]->predecessors_.push_back(basic_blocks[i]);
+
+					break;
+				}
+
+			return basic_blocks;
+		}
+
+		//TODO oèíslovat labely, následnì pøeèíslovat targety skokù na èísla labelù, rozervat na bloky
+
+	public:
+
+		std::vector<std::shared_ptr<basic_block>> compile(std::string_view const code) {
+
+			/* STEPS OF THE COMPILATION PROCESS:
+				starting conditions:
+					compiler object in an possibly undefined state if some conmpilation had already been perfromed
+					source code of the to-be-compiled program. It must be syntactically correct (otherwise an exception or crash occures)
+
+				1) Perform an assertion that the source code is valid as it's expected to be free of any syntax errors when given to the compiler.
+						- It does not matter whether the first and second steps are swapped, because should the code is invalid a crash will occur anyway.
+
+				2) Reset the compiler's state.
+
+				3) Generate the íntermediate code - transform the given source code into a sequence of IR instructions.
+
+				4) Cache addresses of jump instructions to prevent repeating excess searches.
+					- Should be done simultaneously with the previous step
+
+				5) Indentify and number labels (targets of jump instructions).
+					- Found labels mark instructions, that will later become the leaders of basic blocks.
+
+				6) Resolve destinations of jump instructions to target labels instead of instructions.
+
+				7) Construct a net of basic blocks, each having an ID equal to the label denoting its leader instruction.
+
+				8) End of algorithm. The entry block is returned.
+
+			*/
+
+			assert(syntax_validation_is_ok(code));
+
+			reset_compiler_state();
+
+			generate_intermediate_code(code); //performs steps 3 and 4
+
+			identify_labels();
+
+			resolve_jump_targets();
+
+			return construct_program_blocks();
+		}
+
+	};
+		//<<[[>+<-]>[-]]
 
 	namespace {
 
@@ -106,35 +322,43 @@ namespace bf {
 			/*Tries to validate and compile given code and set global variable last_compilation_result
 			according to the compilation's outcome.	If there are no errors, new syntax_tree is generated,
 			otherwise only list of errors is saved. Returns true if compilation was OK.*/
-			bool do_compile(std::string code) { //takes code by value, because it is moved later
+			bool do_compile(std::string code) { // takes code by value, because it is moved later
+				static compiler compiler;
 
-				if (syntax_check_quick_is_ok(code)) { //first perform quick scan for errors. If there are none, proceed with compilation
-					std::optional<syntax_tree> hopefully_contains_tree = generate_syntax_tree(code);
-					assert(hopefully_contains_tree.has_value()); //must be true, as the code had already undergone a syntax check
+				if (syntax_validation_is_ok(code)) { //first perform quick scan for errors. If there are none, proceed with compilation
+					auto code_blocks = compiler.compile(code);
+					assert(!code_blocks.empty()); //must be true, as the code had already undergone a syntax check
 					last_compilation::result = std::make_unique<compilation_result>(std::move(code), std::vector<syntax_error>{},
-						std::move(hopefully_contains_tree)); //move the whole optional containing syntax_tree
+						std::move(code_blocks)); //move the entry_block pointer
 					return true; //return true indicating that compilation did not encounter any errors
 				}
 				else { //quick scan found some errors. Scan again collecting all possible information
-					std::vector<syntax_error> errors = perform_syntax_check_detailed(code);
-					assert(errors.size()); //must contain some errors; we can assert this just for fun :D
-					last_compilation::result = std::make_unique<compilation_result>(std::move(code), std::move(errors), std::nullopt); //empty optional, there can be no syntax_tree for illegal code
+					std::vector<syntax_error> syntax_errors = syntax_validation_detailed(code);
+					assert(syntax_errors.size()); //must contain some errors; we can assert this just for fun :D
+					last_compilation::result = std::make_unique<compilation_result>(std::move(code), std::move(syntax_errors), std::vector<std::shared_ptr<basic_block>>{}); //empty vector for illegal code
 					return false; //indicate that compilation failed
 				}
 			}
 
-			/*Parses argument passed to compile_callback and returns pair of source code and error code. If parsing succeeds, err_code is zero
-			and the string contains source code for a program.*/
-			std::pair<std::string, cli::command_error> parse_arguments(std::string_view const source, std::string_view const arg) {
-				if (source.compare("file") == 0) //the first arg is "file", therefore the second one is file_name
-					if (std::optional<std::string> file_content = cli::read_file(arg); file_content.has_value())
-						return { std::move(*file_content), cli::command_error::ok }; //if reading was ok and file_content has value, steal string from file_content
-					else  //file does not exist
-						return { std::string{}, cli::command_error::file_not_found };
-				else if (source.compare("code") == 0) //second arg is raw source code
-					return { std::string{ arg }, cli::command_error::ok };
-				else  //first argument was not recognized, return err
-					return { std::string{}, cli::command_error::argument_not_recognized };
+			/*Reads the source code for compilation and reports errors if reading does not succeed.
+			If the arguments are ok, returns std::optional containing the source code. An empty object is returned otherwise.*/
+			std::optional<std::string> get_source_code(std::string_view const source, std::string_view const arg) {
+				if (source.compare("code") == 0) //second arg is raw source code
+					return std::string{ arg };
+
+				//the first arg is "file", therefore the second one is file name
+				if (source.compare("file") == 0) {
+					std::optional<std::string> const file_content = utils::read_file(arg);
+					if (!file_content.has_value()) //if file doesn't exist, print error
+						cli::print_command_error(cli::command_error::file_not_found);
+
+					//return the optional. On success this holds a valid source code, on failure this is constructed from std::nullopt
+					return file_content;
+				}
+
+				//first argument is not valid - print error
+				cli::print_command_error(cli::command_error::argument_not_recognized);
+				return std::nullopt;
 			}
 		}
 
@@ -146,62 +370,59 @@ namespace bf {
 		using the command "install"*/
 		int compile_callback(cli::command_parameters_t const& argv) {
 			namespace helper = compile_callback_helper;
-			if (int const ret_code = cli::check_command_argc(3, 3, argv.size()); ret_code)
+			if (int const ret_code = utils::check_command_argc(3, 3, argv))
 				return ret_code; //there must be three arguments
 
-			auto[source_code, err_code] = helper::parse_arguments(argv[1], argv[2]);
-			if (err_code != cli::command_error::ok) {
-				cli::print_command_error(err_code);
-				return static_cast<int>(err_code);
-			}
+			std::optional<std::string> source_code = helper::get_source_code(argv[1], argv[2]);
+			if (!source_code.has_value())
+				return 4;
+
 			//call helper function trying to compile the source code
-			bool const success = helper::do_compile(std::move(source_code));
+			bool const success = helper::do_compile(std::move(*source_code));
 			if (!success) {//compilation failed due to errors
-				std::size_t const err_count = last_compilation::errors().size();
-				std::cout << "Found " << err_count << " error" << cli::print_plural(err_count) << ". You may print more details using the \"errors\" command.\n";
+				std::size_t const err_count = last_compilation::syntax_errors().size();
+				std::cout << "Found " << err_count << " error" << utils::print_plural(err_count)
+					<< ". You may print more details using the \"errors\" command.\n";
+				return 1;
 			}
-			else {  //compilation was successful 
-				std::size_t const instruction_count = last_compilation::syntax_tree().size();
-				std::cout << "Successfully compiled " << instruction_count << " instruction" << cli::print_plural(instruction_count) << ".\n";
-			}
-			return success;
+			//compilation was successful 
+			std::size_t const instruction_count = last_compilation::generate_executable_code().size();
+			std::cout << "Successfully compiled " << instruction_count << " instruction" << utils::print_plural(instruction_count) << ".\n";
+			return 0;
 		}
 
 		/*Wrapper namespace for types and functions used by "errors_callback". Does not pollute global namespace, thankfully*/
 		namespace errors_callback_helper {
 
-			int print_error_detail(int index) {
+			int print_error_detail(int const index) {
 				assert(last_compilation::ready() && !last_compilation::successful()); //if there was no compilation or it completed ok, we have an error
 
-				if (int error_count = static_cast<signed>(last_compilation::errors().size()); index >= error_count) {
-					std::cout << "Requested index " << index << " is out of bounds. Valid range is 0 though " << error_count - 1 << '\n';
+				if (int const error_count = static_cast<signed>(last_compilation::syntax_errors().size()); index >= error_count) {
+					std::cout << "Requested index " << index << " is out of bounds. Valid range is [0, " << error_count << ").\n";
 					return 5;
 				}
-				syntax_error const& error = last_compilation::errors()[index];
-				std::string line{ cli::get_line(last_compilation::code(), error.line_) };
+				syntax_error const& error = last_compilation::syntax_errors()[index];
+				std::string source_code_line{ utils::get_line(last_compilation::source_code(), error.line_) };
+				std::replace(source_code_line.begin(), source_code_line.end(), '\t', ' '); //replace all tabs with spaces to prevent formatting errors
 
-
-				std::replace(line.begin(), line.end(), '\t', ' ');
-				int chars_before = error.char_offset_ - 1;
-				//int chars_after = line.size() - error.char_offset_;
 				std::cout << std::right << std::setw(5) << index << std::left << "  Syntax error: " << error.message_ << " at (" << error.line_ << ", " << error.char_offset_
-					<< ") {\n\t" << line << "\n\t" << std::string(chars_before, ' ') << "^\n}\n";
+					<< ") {\n\t" << source_code_line << "\n\t" << std::string(error.char_offset_ - 1, ' ') << "^\n}\n";
 				return 0;
 			}
 
 			/*Prints all syntax errors to stdout. If there had been no errors, does nothing.
 			if print_full is true, prints full information about all errors.*/
-			int print_syntax_errors(bool print_full) {
+			int print_syntax_errors(bool const print_full) {
 				assert(last_compilation::ready() && !last_compilation::successful()); //if there was no compilation or it completed ok, we have an error
 
 				if (print_full) {
-					for (int i = 0; i < static_cast<int>(last_compilation::errors().size()); ++i)
+					for (int i = 0; i < static_cast<int>(last_compilation::syntax_errors().size()); ++i)
 						print_error_detail(i);
 					return 0;
 				}
 				else {
 					int index = 0;
-					for (auto const& error : last_compilation::errors())
+					for (auto const& error : last_compilation::syntax_errors())
 						std::cout << std::right << std::setw(5) << index++ << std::left << ". syntax error: "
 						<< error.message_ << " at (" << error.line_ << ", " << error.char_offset_ << ").\n";
 					return 0;
@@ -214,7 +435,7 @@ namespace bf {
 		If there had been no compilation performed, function just returns.*/
 		int errors_callback(cli::command_parameters_t const& argv) {
 			namespace helper = errors_callback_helper;
-			if (int const ret_code = cli::check_command_argc(2, 2, argv.size()); ret_code)
+			if (int const ret_code = utils::check_command_argc(2, 2, argv))
 				return ret_code;
 			if (!last_compilation::ready()) {//there hasn't been any compilation performed yet
 				std::cerr << "No compilation has been performed. Compile the program with the \"compile\" command first.\n";
@@ -224,20 +445,20 @@ namespace bf {
 				std::cout << "Previous compilation was successful.\n";
 				return 0;
 			}
-			std::string_view const& arg = argv[1];
-			if (arg.compare("all") == 0)
+
+			if (argv[1].compare("all") == 0)
 				return helper::print_syntax_errors(false);
-			else if (arg.compare("full") == 0)
+			else if (argv[1].compare("full") == 0)
 				return helper::print_syntax_errors(true);
-			else if (arg.compare("count") == 0) {
-				if (std::size_t const count = last_compilation::errors().size(); count == 1)
+			else if (argv[1].compare("count") == 0) {
+				if (std::size_t const count = last_compilation::syntax_errors().size(); count == 1u)
 					std::cout << "There has been one error.\n";
 				else
-					std::cout << "There have been " << last_compilation::errors().size() << " errors.\n";
+					std::cout << "There have been " << count << " errors.\n";
 				return 0;
 			}
-			else if (int index; std::from_chars(argv[1].data(), argv[1].data() + argv[1].size(), index).ec == std::errc{})
-				return helper::print_error_detail(index);
+			else if (std::optional<int> const index = utils::parse_nonnegative_argument(argv[1]); index.has_value())
+				return helper::print_error_detail(*index);
 			else {
 				cli::print_command_error(cli::command_error::argument_not_recognized);
 				return 4;
@@ -247,6 +468,7 @@ namespace bf {
 
 
 	void compiler_initialize() {
+		ASSERT_CALLED_ONLY_ONCE;
 		using namespace bf::cli;
 		cli::add_command("compile", command_category::compilation, "Compiles given source code.",
 			"Usage: \"compile\" [\"code\" or \"file\"] argument\n"
@@ -259,7 +481,7 @@ namespace bf {
 			"Usage: \"errors\" argument\n"
 			"Single argument is expected and its meaning is heavily dependent on context.\n"
 			"\targument == \"all\" => list of syntax errors is simply printed out\n"
-			"\targument == \"full\" => similar list is printed, but every error is printed with all possible information\n"
+			"\targument == \"full\" => similar list is printed, but every error is printed with all known details\n"
 			"\targument == \"count\" => prints number of syntax errors\n"
 			"\targument == non-negative number => prints information about a single error specified by the number\n"
 			"\targument value of \"full\" has therefore the same effect as consecutive calls of this command specifying err numbers in increasing order.\n"
@@ -267,4 +489,4 @@ namespace bf {
 	}
 
 
-}
+} // namespace ::bf
