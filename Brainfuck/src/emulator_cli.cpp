@@ -32,16 +32,16 @@ namespace bf::execution {
 		int flash_callback(cli::command_parameters_t const& argv) {
 			if (int const code = utils::check_command_argc(1, 1, argv))
 				return code;
-			if (!last_compilation::ready()) {
+			if (!prev_compilation::ready()) {
 				std::cerr << "You must first compile a program. See the \"compilation\" group of commands, especially \"compile\".\n";
 				return 4;
 			}
-			if (!last_compilation::successful()) {
+			if (!prev_compilation::successful()) {
 				std::cerr << "Previous compilation encountered an error. Query its results using the \"compilation\" group of commands or perform a new one.\n"
 					"Illegal code cannot be flashed into the CPU.\n";
 				return 5;
 			}
-			emulator.flash_program(last_compilation::generate_executable_code());
+			emulator.flash_program(prev_compilation::generate_executable_code());
 			emulator.reset();
 			std::cout << "Code successfully flashed into the emulator's memory.\n";
 			return 0;

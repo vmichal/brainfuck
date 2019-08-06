@@ -77,7 +77,7 @@ namespace bf::cli {
 		command* get_command(std::string const& cmd_name) {
 			//IIFE to guarantee successful initialization of vector and allocation of memory
 			//must be thread local to correctly handle multiple threads performing a search simultaneously
-			static thread_local std::vector<std::string_view> recursive_searches = [] { std::vector<std::string_view> vec; vec.reserve(1 << 10); return vec; }();
+			static thread_local std::vector<std::string_view> recursive_searches = [] { std::vector<std::string_view> vec; vec.reserve(1024); return vec; }();
 			if (is_command(cmd_name)) //if cmd_name is primary command and it has been defined so
 				return std::addressof(cmd_map.at(cmd_name)); //return pointer to the command
 			if (is_command_alias(cmd_name)) { //else if it's an alias for primary command
@@ -86,7 +86,7 @@ namespace bf::cli {
 					return nullptr;
 				}
 				//If we have found a string (seemingly alias), which has already been tested before, recusrion has been proven. Break out of it
-				if (std::any_of(recursive_searches.begin(), recursive_searches.end(),
+				if (std::any_of(recursive_searches.cbegin(), recursive_searches.cend(),
 					[&cmd_name](std::string_view const view) { return view.compare(cmd_name) == 0; })) {
 					std::cout << "You thought that recursive alias will blow my program up, right? Wrong. It has taken me only "
 						<< recursive_searches.size() << " recursive call" << utils::print_plural(recursive_searches.size())
@@ -522,7 +522,7 @@ namespace bf::cli {
 		int echo_callback(command_parameters_t const& argv) {
 			if (int const code = utils::check_command_argc(1, std::numeric_limits<int>::max(), argv))
 				return code;
-			std::copy(std::next(argv.begin()), argv.end(), std::ostream_iterator<std::string_view>{std::cout, " "});
+			std::copy(std::next(argv.cbegin()), argv.cend(), std::ostream_iterator<std::string_view>{std::cout, " "});
 			std::cout << '\n';
 			return 0;
 		}
@@ -704,8 +704,8 @@ namespace bf::cli {
 			return execute_command(cli_history.previous_commands_.back(), false);
 		}
 		if (tokens[0][0] == '!') { //if first non-whitespace character is exclamation mark, execute command in terminal
-			auto const one_past_exclamation = std::next(std::find(cmd_line.begin(), cmd_line.end(), '!'));
-			if (one_past_exclamation == cmd_line.end()) //exclamation mark is the only character in line. Execute nothing.
+			auto const one_past_exclamation = std::next(std::find(cmd_line.cbegin(), cmd_line.cend(), '!'));
+			if (one_past_exclamation == cmd_line.cend()) //exclamation mark is the only character in line. Execute nothing.
 				return 0;
 
 			//expects null-terminated string; Pointers are necessary, because string_view iterators assert that they point to the same sequence

@@ -99,7 +99,7 @@ namespace bf::breakpoints {
 		assert(std::addressof(all_breakpoints_.at(bp->id_)) == bp); //make sure the argument bp points into the internal map
 		assert(breakpoint_locations_.count(bp->address_)); //make sure breakpoint location exists
 		assert(breakpoint_locations_.at(bp->address_).breakpoints_here_.count(bp)); //make sure specified location contains the bp
-		assert(std::find(hit_breakpoints_.begin(), hit_breakpoints_.end(), bp) == hit_breakpoints_.end()); //make sure the breakpoint is no longer used
+		assert(std::find(hit_breakpoints_.cbegin(), hit_breakpoints_.cend(), bp) == hit_breakpoints_.cend()); //make sure the breakpoint is no longer used
 
 		location& brk_location = breakpoint_locations_.at(bp->address_); //get the breakpoint location
 		brk_location.breakpoints_here_.erase(bp); //remove current breakpoint from this location
@@ -153,14 +153,14 @@ namespace bf::breakpoints {
 		assert(execution::emulator.has_program()); //make sure there is some program..
 		assert(hit_breakpoints_.empty()); //sanity check; all breakpoints had been processed before the new ones were reached
 		assert(breakpoint_locations_.count(address)); //make sure the specified address has a corresponding breakpoint location
-		assert(std::any_of(all_breakpoints_.begin(), all_breakpoints_.end(), //make sure at least one breakpoint resides at the specified address 
+		assert(std::any_of(all_breakpoints_.cbegin(), all_breakpoints_.cend(), //make sure at least one breakpoint resides at the specified address 
 			[address](std::pair<int const, breakpoint> const& pair) -> bool { return pair.second.address_ == address; }));
 
 
 		std::unordered_set<breakpoint*> const& breaks_here = get_breakpoints_at(address);
 		/*Traverse all possibly hit breakpoints trying to hit them. If it's successful, add them to the vector of
 		hit but unprocessed breakpoints.*/
-		std::copy_if(breaks_here.begin(), breaks_here.end(), std::back_inserter(hit_breakpoints_),
+		std::copy_if(breaks_here.cbegin(), breaks_here.cend(), std::back_inserter(hit_breakpoints_),
 			[](breakpoint* const b) {return b->try_hit(); });
 		return hit_breakpoints_.empty(); //if none has been hit, ignore them
 	}

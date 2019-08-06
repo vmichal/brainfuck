@@ -245,7 +245,7 @@ namespace bf::data_inspection {
 							while (end_of_token != end && std::isdigit(*end_of_token, std::locale{}))
 								++end_of_token;
 						//operators are always single letter -> just append them to the list
-						tokens.emplace_back(expression.data() + std::distance(expression.begin(), iter), std::distance(iter, end_of_token));
+						tokens.emplace_back(expression.data() + std::distance(expression.cbegin(), iter), std::distance(iter, end_of_token));
 						iter = end_of_token;
 					}
 					return tokens;
@@ -295,8 +295,8 @@ namespace bf::data_inspection {
 						if (tokens.size() % 2 == 0) //even number of tokens means that some binary operator does not have two operands
 							return false;
 
-						current_token_ = tokens.begin();
-						for (auto end = tokens.end(); current_token_ != end && !error_; ++current_token_)
+						current_token_ = tokens.cbegin();
+						for (auto end = tokens.cend(); current_token_ != end && !error_; ++current_token_)
 							if (current_token_->front() == '$')  //the token is a CPU's register
 								match_register();
 							else if (std::isdigit(current_token_->front(), std::locale{})) { //the token is a number
@@ -712,7 +712,7 @@ namespace bf::data_inspection {
 							stream << replaced_instruction.op_code_ << ' ' << std::left << std::setw(12) << replaced_instruction.argument_
 								<< " <= breakpoint" << utils::print_plural(breakpoints_here.size()) << ' ';
 
-							std::transform(breakpoints_here.begin(), breakpoints_here.end(), std::ostream_iterator<int>{ stream, " " },
+							std::transform(breakpoints_here.cbegin(), breakpoints_here.cend(), std::ostream_iterator<int>{ stream, " " },
 								[](breakpoints::breakpoint const* const bp) -> int {return bp->id_; });
 						}
 						else

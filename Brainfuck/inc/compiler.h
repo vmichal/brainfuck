@@ -10,7 +10,7 @@ namespace bf {
 
 	/*Namespace wrapping functions observing the state of lastly performed compilation. Allows to query the validity of
 	this result (i.e. if some compilation had been run), encountered syntax errors, source code as well as compiled code.*/
-	namespace last_compilation {
+	namespace prev_compilation {
 
 		//Returns reference to the source code of previous compilation
 		std::string& source_code();

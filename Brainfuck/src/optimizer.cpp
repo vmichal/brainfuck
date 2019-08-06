@@ -264,14 +264,14 @@ namespace bf {
 			if (int const code = utils::check_command_argc(2, std::numeric_limits<int>::max(), argv))
 				return code;
 
-			if (!last_compilation::ready()) {
+			if (!prev_compilation::ready()) {
 				std::cerr << "Cannot optimize, no program had been compiled.\n";
 				return 6;
 			}
 
 			opt_level_t opt_level = optimizations::none;
 
-			for (auto iter = std::next(argv.begin()), end = argv.end(); iter != end; ++iter)
+			for (auto iter = std::next(argv.cbegin()), end = argv.cend(); iter != end; ++iter)
 				if (opt_level_t tmp = optimizations::get_opt_by_name(*iter); tmp == optimizations::none) {
 					cli::print_command_error(cli::command_error::argument_not_recognized);
 					return 4;
@@ -279,7 +279,7 @@ namespace bf {
 				else
 					opt_level |= tmp;
 
-			perform_optimizations(last_compilation::basic_blocks_mutable(), opt_level);
+			perform_optimizations(prev_compilation::basic_blocks_mutable(), opt_level);
 
 			return 0;
 		}

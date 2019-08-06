@@ -26,60 +26,62 @@ namespace bf {
 
 		template<typename A, typename B, typename C>
 		compilation_result(A&& source_code, B&& syntax_errors, C&& basic_blocks) noexcept
-			: source_code_(std::forward<A&&>(source_code)), syntax_errors_(std::forward<B&&>(syntax_errors)), basic_blocks_(std::forward<C&&>(basic_blocks))
+			: source_code_(std::forward<A&&>(source_code)), 
+			syntax_errors_(std::forward<B&&>(syntax_errors)), 
+			basic_blocks_(std::forward<C&&>(basic_blocks))
 		{}
 	};
 
-	namespace last_compilation {
+	namespace prev_compilation {
 
 		/*Internal unique pointer to the result of last compilation. After the first compilation finishes, a meaningful value is set;
 		until then contains nullptr.*/
-		std::unique_ptr<compilation_result> result;
+		std::unique_ptr<compilation_result> prev_compilation_result;
 
 		std::string& source_code() {
 			assert(ready());
-			return result->source_code_;
+			return prev_compilation_result->source_code_;
 		}
 
 		std::vector<syntax_error>& syntax_errors() {
 			assert(ready());
-			return result->syntax_errors_;
+			return prev_compilation_result->syntax_errors_;
 		}
 
 		std::vector<instruction> generate_executable_code() {
 			assert(ready());
 
 			std::vector<instruction> res;
-			res.reserve(std::accumulate(result->basic_blocks_.begin(), result->basic_blocks_.end(), 0,
+			res.reserve(std::accumulate(prev_compilation_result->basic_blocks_.cbegin(), prev_compilation_result->basic_blocks_.cend(), 0,
 				[](int const tmp, std::shared_ptr<basic_block> const& block) {
 					return tmp + block->ops_.size();
 				}));
 
 
-			for (auto const& block : result->basic_blocks_)
-				res.insert(res.end(), block->ops_.begin(), block->ops_.end());
+			for (auto const& block : prev_compilation_result->basic_blocks_)
+				res.insert(res.end(), block->ops_.cbegin(), block->ops_.cend());
 
 			return res;
 		}
 
 		std::vector<std::shared_ptr<basic_block>> const& basic_blocks() {
 			assert(ready());
-			return result->basic_blocks_;
+			return prev_compilation_result->basic_blocks_;
 		}
 
 		std::vector<std::shared_ptr<basic_block>>& basic_blocks_mutable() {
 			assert(ready());
-			return result->basic_blocks_;
+			return prev_compilation_result->basic_blocks_;
 		}
 
 		bool successful() {
 			assert(ready());
-			assert(result->syntax_errors_.empty() == !result->basic_blocks_.empty());
-			return !result->basic_blocks_.empty();
+			assert(prev_compilation_result->syntax_errors_.empty() == !prev_compilation_result->basic_blocks_.empty());
+			return !prev_compilation_result->basic_blocks_.empty();
 		}
 
 		bool ready() {
-			return static_cast<bool>(result);
+			return static_cast<bool>(prev_compilation_result);
 		}
 	}
 
@@ -136,7 +138,7 @@ namespace bf {
 			//make sure that the generated source_code has proper format
 			assert(instructions_.front().op_code_ == op_code::program_entry && instructions_.back().op_code_ == op_code::program_exit);
 			assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
-			assert(std::all_of(jumps_.begin(), jumps_.end(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
+			assert(std::all_of(jumps_.cbegin(), jumps_.cend(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
 
 			/*Each label marks a single leader. Leaders of basic blocks are found by applying the following algorithm:
 				1) The first instruction is a leader.
@@ -194,12 +196,12 @@ namespace bf {
 				case op_code::jump:   //for opening brace instructions (the unconditional jump):
 					next_label = std::find(next_label, labels_.cend(), jump + 1);
 					assert(next_label != labels_.cend());
-					opened_loops.emplace(jump, std::distance(labels_.begin(), next_label)); //push the address of this jump instruction and the corresponding label's index. 
+					opened_loops.emplace(jump, std::distance(labels_.cbegin(), next_label)); //push the address of this jump instruction and the corresponding label's index. 
 					break;
 
 				case op_code::jump_not_zero:
 				{
-					assert(!opened_loops.empty()); //in valid code there must be some loop still left unlosed
+					assert(!opened_loops.empty()); //in valid code there still has to be some loop remaining
 					next_label = std::find(next_label, labels_.cend(), jump);
 					assert(next_label != labels_.cend());
 					auto const [uncond_jump, target_label_for_cj] = opened_loops.top();
@@ -222,7 +224,7 @@ namespace bf {
 		}
 
 		std::vector<std::shared_ptr<basic_block>> construct_program_blocks() const {
-			{ //A lot of samity checks...
+			{ //A lot of sanity checks...
 				assert(labels_.size() >= 2); //at least two labels must exist (entry one and the one past the end)
 				assert(instructions_.size() >= 2); //at least program_entry and program_exit must be present
 				//make sure that the generated source_code has proper format
@@ -266,8 +268,6 @@ namespace bf {
 
 			return basic_blocks;
 		}
-
-		//TODO oèíslovat labely, následnì pøeèíslovat targety skokù na èísla labelù, rozervat na bloky
 
 	public:
 
@@ -328,14 +328,14 @@ namespace bf {
 				if (syntax_validation_is_ok(code)) { //first perform quick scan for errors. If there are none, proceed with compilation
 					auto code_blocks = compiler.compile(code);
 					assert(!code_blocks.empty()); //must be true, as the code had already undergone a syntax check
-					last_compilation::result = std::make_unique<compilation_result>(std::move(code), std::vector<syntax_error>{},
+					prev_compilation::prev_compilation_result = std::make_unique<compilation_result>(std::move(code), std::vector<syntax_error>{},
 						std::move(code_blocks)); //move the entry_block pointer
 					return true; //return true indicating that compilation did not encounter any errors
 				}
 				else { //quick scan found some errors. Scan again collecting all possible information
 					std::vector<syntax_error> syntax_errors = syntax_validation_detailed(code);
 					assert(syntax_errors.size()); //must contain some errors; we can assert this just for fun :D
-					last_compilation::result = std::make_unique<compilation_result>(std::move(code), std::move(syntax_errors), std::vector<std::shared_ptr<basic_block>>{}); //empty vector for illegal code
+					prev_compilation::prev_compilation_result = std::make_unique<compilation_result>(std::move(code), std::move(syntax_errors), std::vector<std::shared_ptr<basic_block>>{}); //empty vector for illegal code
 					return false; //indicate that compilation failed
 				}
 			}
@@ -380,13 +380,13 @@ namespace bf {
 			//call helper function trying to compile the source code
 			bool const success = helper::do_compile(std::move(*source_code));
 			if (!success) {//compilation failed due to errors
-				std::size_t const err_count = last_compilation::syntax_errors().size();
+				std::size_t const err_count = prev_compilation::syntax_errors().size();
 				std::cout << "Found " << err_count << " error" << utils::print_plural(err_count)
 					<< ". You may print more details using the \"errors\" command.\n";
 				return 1;
 			}
 			//compilation was successful 
-			std::size_t const instruction_count = last_compilation::generate_executable_code().size();
+			std::size_t const instruction_count = prev_compilation::generate_executable_code().size();
 			std::cout << "Successfully compiled " << instruction_count << " instruction" << utils::print_plural(instruction_count) << ".\n";
 			return 0;
 		}
@@ -395,14 +395,14 @@ namespace bf {
 		namespace errors_callback_helper {
 
 			int print_error_detail(int const index) {
-				assert(last_compilation::ready() && !last_compilation::successful()); //if there was no compilation or it completed ok, we have an error
+				assert(prev_compilation::ready() && !prev_compilation::successful()); //if there was no compilation or it completed ok, we have an error
 
-				if (int const error_count = static_cast<signed>(last_compilation::syntax_errors().size()); index >= error_count) {
+				if (int const error_count = static_cast<signed>(prev_compilation::syntax_errors().size()); index >= error_count) {
 					std::cout << "Requested index " << index << " is out of bounds. Valid range is [0, " << error_count << ").\n";
 					return 5;
 				}
-				syntax_error const& error = last_compilation::syntax_errors()[index];
-				std::string source_code_line{ utils::get_line(last_compilation::source_code(), error.line_) };
+				syntax_error const& error = prev_compilation::syntax_errors()[index];
+				std::string source_code_line{ utils::get_line(prev_compilation::source_code(), error.line_) };
 				std::replace(source_code_line.begin(), source_code_line.end(), '\t', ' '); //replace all tabs with spaces to prevent formatting errors
 
 				std::cout << std::right << std::setw(5) << index << std::left << "  Syntax error: " << error.message_ << " at (" << error.line_ << ", " << error.char_offset_
@@ -413,16 +413,16 @@ namespace bf {
 			/*Prints all syntax errors to stdout. If there had been no errors, does nothing.
 			if print_full is true, prints full information about all errors.*/
 			int print_syntax_errors(bool const print_full) {
-				assert(last_compilation::ready() && !last_compilation::successful()); //if there was no compilation or it completed ok, we have an error
+				assert(prev_compilation::ready() && !prev_compilation::successful()); //if there was no compilation or it completed ok, we have an error
 
 				if (print_full) {
-					for (int i = 0; i < static_cast<int>(last_compilation::syntax_errors().size()); ++i)
+					for (int i = 0; i < static_cast<int>(prev_compilation::syntax_errors().size()); ++i)
 						print_error_detail(i);
 					return 0;
 				}
 				else {
 					int index = 0;
-					for (auto const& error : last_compilation::syntax_errors())
+					for (auto const& error : prev_compilation::syntax_errors())
 						std::cout << std::right << std::setw(5) << index++ << std::left << ". syntax error: "
 						<< error.message_ << " at (" << error.line_ << ", " << error.char_offset_ << ").\n";
 					return 0;
@@ -437,11 +437,11 @@ namespace bf {
 			namespace helper = errors_callback_helper;
 			if (int const ret_code = utils::check_command_argc(2, 2, argv))
 				return ret_code;
-			if (!last_compilation::ready()) {//there hasn't been any compilation performed yet
+			if (!prev_compilation::ready()) {//there hasn't been any compilation performed yet
 				std::cerr << "No compilation has been performed. Compile the program with the \"compile\" command first.\n";
 				return 3;
 			}
-			if (last_compilation::successful()) {
+			if (prev_compilation::successful()) {
 				std::cout << "Previous compilation was successful.\n";
 				return 0;
 			}
@@ -451,7 +451,7 @@ namespace bf {
 			else if (argv[1].compare("full") == 0)
 				return helper::print_syntax_errors(true);
 			else if (argv[1].compare("count") == 0) {
-				if (std::size_t const count = last_compilation::syntax_errors().size(); count == 1u)
+				if (std::size_t const count = prev_compilation::syntax_errors().size(); count == 1u)
 					std::cout << "There has been one error.\n";
 				else
 					std::cout << "There have been " << count << " errors.\n";

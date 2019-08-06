@@ -39,7 +39,7 @@ namespace bf::utils {
 		std::vector<std::string_view> tokens;
 
 		//transform range represented by regex_token_iterators using lambda. The iterator traverses the string trying to match it against token_regex 
-		std::transform(token_iterator{ str.begin(), str.end(), token_regex, 1 }, //and selecting just the first submatch on success
+		std::transform(token_iterator{ str.cbegin(), str.cend(), token_regex, 1 }, //and selecting just the first submatch on success
 			token_iterator{}, std::back_inserter(tokens),  //results of transformations are being push_backed into the vector during the transformation
 			[](std::sub_match<std::string_view::const_iterator> const &match) -> std::string_view { //take each sub_match and transform it into a string_view
 				std::string_view token{ &*match.first, static_cast<std::size_t>(std::distance(match.first, match.second)) };
@@ -63,7 +63,7 @@ namespace bf::utils {
 
 		//iterate over passed string_view trying to match regular expression. Call lambda on each match and append result to vector 
 		//we are interested in submatch -1 (="stuff that was left unmatched" as stated at cppreference.com)
-		std::transform(token_iterator{ str.begin(), str.end(), new_line_regex, -1 },
+		std::transform(token_iterator{ str.cbegin(), str.cend(), new_line_regex, -1 },
 			token_iterator{}, std::back_inserter(result),
 			[](std::sub_match<std::string_view::const_iterator>const &match) -> std::string_view {
 				//constructs std::string_view from pointer and size by means of uniform initialization 
@@ -77,15 +77,15 @@ namespace bf::utils {
 
 	std::string_view get_line(std::string_view const str, int line_num) {
 		assert(line_num > 0);
-		std::string_view::const_iterator after_new_line = str.begin();
+		std::string_view::const_iterator after_new_line = str.cbegin();
 		for (--line_num; line_num; --line_num) {
-			after_new_line = std::find(after_new_line, str.end(), '\n');
-			if (after_new_line == str.end())
+			after_new_line = std::find(after_new_line, str.cend(), '\n');
+			if (after_new_line == str.cend())
 				return { str.data(), 0 }; //invalid value
 			std::advance(after_new_line, 1);
 		}
 		return { &*after_new_line, static_cast<std::size_t>(std::distance(after_new_line,
-			std::find(std::next(after_new_line), str.end(), '\n'))) };
+			std::find(std::next(after_new_line), str.cend(), '\n'))) };
 	}
 
 	std::optional<std::string> read_file(std::string_view file_name) {
