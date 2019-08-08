@@ -32,16 +32,16 @@ namespace bf::execution {
 		int flash_callback(cli::command_parameters_t const& argv) {
 			if (int const code = utils::check_command_argc(1, 1, argv))
 				return code;
-			if (!prev_compilation::ready()) {
+			if (!previous_compilation::ready()) {
 				std::cerr << "You must first compile a program. See the \"compilation\" group of commands, especially \"compile\".\n";
 				return 4;
 			}
-			if (!prev_compilation::successful()) {
+			if (!previous_compilation::successful()) {
 				std::cerr << "Previous compilation encountered an error. Query its results using the \"compilation\" group of commands or perform a new one.\n"
 					"Illegal code cannot be flashed into the CPU.\n";
 				return 5;
 			}
-			emulator.flash_program(prev_compilation::generate_executable_code());
+			emulator.flash_program(previous_compilation::generate_executable_code());
 			emulator.reset();
 			std::cout << "Code successfully flashed into the emulator's memory.\n";
 			return 0;
@@ -146,7 +146,7 @@ namespace bf::execution {
 				return code;
 			}
 
-		}
+		} //namespace bf::execution::`anonymous`::step_and_continue_helper
 
 		/*Function callback fot the "continue" command. Does not do much, just makes sure arguments are ok and
 		if the cpu finds itself in a valid state, makes it proceed with the execution.*/
@@ -258,7 +258,7 @@ namespace bf::execution {
 				}
 				return 0;
 			}
-		}
+		} //namespace bf::execution::`anonymous`::redirect_command_helper
 
 		/*Function callback for the redirect cli command.
 		Accepts two arguments, first one specifying the stream to be altered, the second one naming the stream
@@ -313,11 +313,11 @@ namespace bf::execution {
 			std::cout << "Keyboard interrupt detected!\n";
 			std::signal(SIGINT, &os_interrupt_handler); //register self as handler again, otherwise next SIGINT kills the program
 		}
-	}
+	} //namespace bf::execution::`anonymous`
 
 
 	void initialize() {
-		ASSERT_CALLED_ONLY_ONCE;
+		ASSERT_IS_CALLED_ONLY_ONCE;
 
 		//register SIGINT handler
 		std::signal(SIGINT, &os_interrupt_handler);
@@ -377,4 +377,4 @@ namespace bf::execution {
 	}
 
 
-}
+} //namespace bf::execution

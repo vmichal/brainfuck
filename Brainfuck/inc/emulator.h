@@ -1,3 +1,5 @@
+#ifndef EMULATOR_H
+#define EMULATOR_H
 #pragma once
 
 #include "program_code.h"
@@ -12,27 +14,28 @@ namespace bf::execution {
 
 	/*All CPU flags' bitmasks.*/
 	enum class flag : std::uint32_t {
-		halt = 1 << 0,
-		single_step = 1 << 1,
-		breakpoint_hit = 1 << 2,
-		os_interrupt = 1 << 3,
-		suppress_stop_interrupt = 1 << 4
+		halt = 1UL << 0,
+		single_step = 1UL << 1,
+		breakpoint_hit = 1UL << 2,
+		os_interrupt = 1UL << 3,
+		suppress_stop_interrupt = 1UL << 4
 	};
 
 	/*A reference to a CPU flag. Allows writing and reading of a single flag determined by the template parameter*/
-	template<flag BIT_MASK>
+	template<flag FLAG>
 	class flag_reference {
-		static constexpr flag flag_ = BIT_MASK;
-		static constexpr std::uint32_t bit_mask_ = static_cast<std::uint32_t>(BIT_MASK);
-		static constexpr std::uint32_t not_mask_ = ~bit_mask_;
+		static constexpr flag flag_ = FLAG;
+		using value_type = std::underlying_type_t<flag>;
+		static constexpr value_type bit_mask_ = static_cast<value_type>(flag_);
+		static constexpr value_type not_mask_ = ~bit_mask_;
 
-		std::uint32_t volatile& register_reference_;
+		value_type volatile& register_reference_;
 
 
 	public:
-		flag_reference(std::uint32_t volatile &val) : register_reference_(val) {}
-		flag_reference(flag_reference const& copy) = default;
-		flag_reference(flag_reference &&move) = default;
+		flag_reference(value_type volatile& val) noexcept : register_reference_{ val } {}
+		flag_reference(flag_reference const& copy) noexcept = default;
+		flag_reference(flag_reference&& move) noexcept = default;
 
 		void flip() volatile {
 			register_reference_ ^= bit_mask_;
@@ -46,11 +49,12 @@ namespace bf::execution {
 			register_reference_ &= not_mask_;
 		}
 
+		[[nodiscard]]
 		operator bool() volatile {
 			return register_reference_ & bit_mask_;
 		}
 
-		flag_reference volatile& operator=(bool new_val) volatile {
+		flag_reference volatile& operator=(bool const new_val) volatile {
 			if (new_val)
 				set();
 			else
@@ -60,49 +64,57 @@ namespace bf::execution {
 	};
 
 	/*CPU's FLAGS register. Stores its state as a bitfield and allows access through flag_references.*/
-	class flags_register {
-		std::uint32_t value_ = 0;
+	class flags_register final {
+		using value_type = std::underlying_type_t<flag>;
+		value_type value_ = 0;
+
 
 	public:
 		//default state is all flags zero
-		flags_register() = default;
-		flags_register(std::uint32_t value) : value_(value) {}
+		flags_register() noexcept = default;
+		explicit flags_register(value_type value) noexcept : value_{ value } {}
 
 
+		[[nodiscard]]
 		flag_reference<flag::halt> volatile halt() volatile {
 			return value_;
 		}
 
+		[[nodiscard]]
 		flag_reference<flag::single_step> volatile single_step() volatile {
 			return value_;
 		}
 
+		[[nodiscard]]
 		flag_reference<flag::breakpoint_hit> volatile breakpoint_hit() volatile {
 			return value_;
 		}
 
+		[[nodiscard]]
 		flag_reference<flag::os_interrupt> volatile os_interrupt() volatile {
 			return value_;
 		}
 
+		[[nodiscard]]
 		flag_reference<flag::suppress_stop_interrupt> volatile suppress_stop_interrupt() volatile {
 			return value_;
 		}
 
-		bool get(flag flag) volatile {
-			return value_ & static_cast<std::uint32_t>(flag);
+		[[nodiscard]]
+		bool get(flag const flag) volatile {
+			return value_ & static_cast<value_type>(flag);
 		}
 
-		void flip(flag flag) volatile {
-			value_ ^= static_cast<std::uint32_t>(flag);
+		void flip(flag const flag) volatile {
+			value_ ^= static_cast<value_type>(flag);
 		}
 
-		void set(flag flag) volatile {
-			value_ |= static_cast<std::uint32_t>(flag);
+		void set(flag const flag) volatile {
+			value_ |= static_cast<value_type>(flag);
 		}
 
-		void clear(flag flag) volatile {
-			value_ &= ~static_cast<std::uint32_t>(flag);
+		void clear(flag const flag) volatile {
+			value_ &= ~static_cast<value_type>(flag);
 		}
 
 		void reset() volatile {
@@ -120,7 +132,7 @@ namespace bf::execution {
 		interrupted //A program execution has been interrupted e.g by a breakpoint
 	};
 
-	
+
 	class cpu_emulator {
 
 		friend class breakpoints::breakpoint_manager;
@@ -131,18 +143,21 @@ namespace bf::execution {
 	private:
 
 		std::vector<instruction> instructions_;
-		int program_counter_ = 0, executed_instructions_counter_ = 0;
+		std::ptrdiff_t program_counter_ = 0,
+			executed_instructions_counter_ = 0;
 		flags_register volatile flags_register_;
-		std::array<memory_cell_t, 64> memory_;
+		std::array<memory_cell_t, 64> memory_ = { 0 };
 		memory_cell_t* cell_pointer_reg_ = memory_.data();
 		execution_state state_ = execution_state::not_started;
 
-		std::istream * emulated_program_stdin_ = &std::cin;
-		std::ostream * emulated_program_stdout_ = &std::cout;
+		std::istream* emulated_program_stdin_ = &std::cin;
+		std::ostream* emulated_program_stdout_ = &std::cout;
 		bool stdin_eof_ = false;
 
 	public:
+		[[nodiscard]]
 		std::istream*& emulated_program_stdin() { return emulated_program_stdin_; }
+		[[nodiscard]]
 		std::ostream*& emulated_program_stdout() { return emulated_program_stdout_; }
 
 	private:
@@ -153,10 +168,10 @@ namespace bf::execution {
 		void breakpoint_interrupt_handler();
 
 		/*MicroOP code for "left". Moves CPR one cell to the left wrapping around the boundaries.*/
-		void left(int count);
+		void left(std::ptrdiff_t count);
 		/*MicroOP code for the "right" instruction. Advances the CPR one cell to right and wraps it around the boundary of memory if such
 		shift would overflow.*/
-		void right(int count);
+		void right(std::ptrdiff_t count);
 
 		/*Executes a single specified instruction and returns.*/
 		void do_execute(instruction const& instruction);
@@ -170,46 +185,80 @@ namespace bf::execution {
 		~cpu_emulator() = default;
 		cpu_emulator(cpu_emulator const&) = delete;
 		cpu_emulator(cpu_emulator&&) = delete;
+		cpu_emulator& operator=(cpu_emulator const&) = delete;
+		cpu_emulator& operator=(cpu_emulator&&) = delete;
 
 		void flash_program(std::vector<instruction> new_instructions);
 
 		/*Zeroes out memory, resets CPR and PC, in case input is redirected to a disk file, it's reset*/
 		void reset();
 
+		[[nodiscard]]
 		execution_state state() const { return state_; }
 
+		[[nodiscard]]
 		flag_reference<flag::halt> halt();
+		[[nodiscard]]
 		flag_reference<flag::single_step> single_step();
+		[[nodiscard]]
 		flag_reference<flag::os_interrupt> os_interrupt();
+		[[nodiscard]]
 		flag_reference<flag::suppress_stop_interrupt> suppress_stop_interrupt();
 
-		bool has_program() const { return instructions_.size(); }
+		[[nodiscard]]
+		bool has_program() const { return !instructions_.empty(); }
 
 		void do_execute();
 
 
-		int program_counter() { return program_counter_; }
-		int executed_instructions_counter() { return executed_instructions_counter_; }
+		[[nodiscard]]
+		std::ptrdiff_t program_counter() { return program_counter_; }
+		[[nodiscard]]
+		std::ptrdiff_t executed_instructions_counter() { return executed_instructions_counter_; }
+
+		[[nodiscard]]
 		instruction* instructions_begin() { return instructions_.data(); }
+		[[nodiscard]]
+		instruction const* instructions_cbegin() const { return instructions_.data(); }
+
+		[[nodiscard]]
 		instruction* instructions_end() { return instructions_.data() + instructions_.size(); }
-		int instructions_size() { return static_cast<int>(instructions_.size()); }
+		[[nodiscard]]
+		instruction const* instructions_cend() const { return instructions_.data() + instructions_.size(); }
+
+		[[nodiscard]]
+		ptrdiff_t instructions_size() { return static_cast<std::ptrdiff_t>(instructions_.size()); }
 
 
 
 
-		constexpr int memory_size() const { return static_cast<int>(memory_.size()); }
+		[[nodiscard]]
+		constexpr std::ptrdiff_t memory_size() const { return static_cast<std::ptrdiff_t>(memory_.size()); }
+
 		//returns a pointer to the first cell in data memory. Must be untyped due to raw byte manipulations done by some commands
+		[[nodiscard]]
 		void* memory_begin() { return memory_.data(); }
+		[[nodiscard]]
+		void const* memory_cbegin() const { return memory_.data(); }
+		[[nodiscard]]
 		void const* memory_begin() const { return memory_.data(); }
+
 		//returns an address of the first element located past the memory's boundaries. Must be untyped due to raw byte manipulations done by some commands
+		[[nodiscard]]
 		void* memory_end() { return memory_.data() + memory_.size(); }
+		[[nodiscard]]
+		void const* memory_cend() const { return memory_.data() + memory_.size(); }
+		[[nodiscard]]
 		void const* memory_end() const { return memory_.data() + memory_.size(); }
 
 		//Returns the value of CPU's CPR. Must be untyped due to raw byte manipulations done by some commands
+		[[nodiscard]]
 		void* cell_pointer() { return cell_pointer_reg_; }
+		[[nodiscard]]
 		void const* cell_pointer() const { return cell_pointer_reg_; }
 		//returns an offset of cpr from the memory's bounds
-		int cell_pointer_register() const { return static_cast<int>(std::distance(static_cast<unsigned char const*>(memory_begin()), static_cast<unsigned char const*>(cell_pointer()))); }
+		[[nodiscard]]
+		std::ptrdiff_t cell_pointer_offset() const { return std::distance(static_cast<unsigned char const*>(memory_begin()), static_cast<unsigned char const*>(cell_pointer())); }
 
 
 
@@ -224,3 +273,5 @@ namespace bf::execution {
 	the function of internal cpu emulator.*/
 	void initialize();
 }
+
+#endif

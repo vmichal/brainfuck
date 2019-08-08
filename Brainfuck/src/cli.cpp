@@ -628,7 +628,7 @@ namespace bf::cli {
 				for (std::string_view const& line : utils::split_to_lines(*file_content)) {
 					if (line.empty()) continue;
 					std::cout << "Executing " << std::quoted(line) << '\n';
-					execute_command(static_cast<std::string>(line), false);
+					execute_command(std::string{ line }, false);
 				}
 				return 0;
 			}
@@ -649,7 +649,8 @@ namespace bf::cli {
 
 				"To get started, check out the \"help\" command to learn more about the program's features.\n";
 		}
-	}
+
+	} //namespace bf::cli::`anonymous namespace`
 
 	std::ostream& operator<<(std::ostream& str, command_category category) {
 		switch (category) {
@@ -659,7 +660,7 @@ namespace bf::cli {
 		case command_category::compilation: str << "compilation"; break;
 		case command_category::optimization: str << "optimization"; break;
 		case command_category::execution: str << "emulation"; break;
-		case command_category::debug: str << "debug"; break;
+		case command_category::debugging: str << "debug"; break;
 		case command_category::hooks: str << "hooks"; break;
 			ASSERT_NO_OTHER_OPTION
 		}
@@ -796,7 +797,7 @@ namespace bf::cli {
 
 
 	void initialize() {
-		ASSERT_CALLED_ONLY_ONCE
+		ASSERT_IS_CALLED_ONLY_ONCE;
 			add_command("quit", command_category::general, "Exits the program.",
 				"Usage: \"quit\" [return_code]\n"
 				"Optional return code is returned to the OS; zero is used if it's left unspecified."
@@ -870,4 +871,5 @@ namespace bf::cli {
 			"Commands executed as the consequence of batch execution are not kept in the CLI's history."
 			, &script_callback);
 	}
-}
+
+} //namespace bf::cli

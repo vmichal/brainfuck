@@ -19,9 +19,9 @@ namespace bf {
 		compiler_initialize();
 		breakpoints::initialize();
 		data_inspection::initialize();
-		optimizer_initialize();
+		optimizations::initialize();
 	}
-}
+} //namespace bf
 
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {

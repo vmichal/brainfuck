@@ -7,37 +7,30 @@
 namespace bf {
 
 	std::string const& get_mnemonic(op_code const code) {
+		using namespace std::string_literals;
 		static std::unordered_map<op_code, std::string> const op_code_mnemonics = {
-			{op_code::nop,                   "nop"},
-			{op_code::inc,					 "inc"},
-			{op_code::dec,					 "dec"},
-			{op_code::left,			        "left"},
-			{op_code::right,			   "right"},
-			{op_code::jump,	                "jump"},
-			{op_code::jump_not_zero,	 "jump_nz"},
-			{op_code::read,				    "read"},
-			{op_code::write,		       "write"},
-			{op_code::breakpoint,     "breakpoint"},
-			{op_code::load_const,     "load_const"},
-			{op_code::program_exit,         "exit"},
-			{op_code::program_entry,       "entry"}
+			{op_code::nop,                   "nop"s},
+			{op_code::inc,					 "inc"s},
+			{op_code::dec,					 "dec"s},
+			{op_code::left,			        "left"s},
+			{op_code::right,			   "right"s},
+			{op_code::jump,	                "jump"s},
+			{op_code::jump_not_zero,	 "jump_nz"s},
+			{op_code::read,				    "read"s},
+			{op_code::write,		       "write"s},
+			{op_code::breakpoint,     "breakpoint"s},
+			{op_code::load_const,     "load_const"s},
+			{op_code::program_exit,         "exit"s},
+			{op_code::program_entry,       "entry"s}
 		};
 		assert(op_code_mnemonics.count(code));
 		return op_code_mnemonics.at(code);
 	}
 
-	bool instruction::is_foldable() const {
-		static std::unordered_set<op_code> const foldable {
-			op_code::inc,
-			op_code::dec,
-			op_code::left,
-			op_code::right
-		};
-		return foldable.count(op_code_);
-	}
-
-	std::ostream& operator<<(std::ostream& str, op_code code) {
+	
+	std::ostream& operator<<(std::ostream& str, op_code const code) {
 		return str << get_mnemonic(code);
 	}
 
-}
+
+} //namespace bf

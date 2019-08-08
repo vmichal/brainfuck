@@ -70,4 +70,4 @@ namespace bf {
 		return syntax_errors;
 	}
 
-} //end of namespace bf
+} // namespace bf

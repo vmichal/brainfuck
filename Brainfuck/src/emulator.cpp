@@ -59,14 +59,14 @@ namespace bf::execution {
 		}
 	}
 
-	void cpu_emulator::left(int count) {
+	void cpu_emulator::left(std::ptrdiff_t const count) {
 		assert(count > 0);
 		cell_pointer_reg_ -= count;
 		while (cell_pointer_reg_ < memory_begin())  //if the value exceeds memory's bounds
 			cell_pointer_reg_ += memory_size();
 	}
 
-	void cpu_emulator::right(int count) {
+	void cpu_emulator::right(std::ptrdiff_t const count) {
 		assert(count > 0);
 		cell_pointer_reg_ += count;
 		while (cell_pointer_reg_ >= memory_end())   //if the value exceeds memory's bounds
@@ -79,10 +79,10 @@ namespace bf::execution {
 		case op_code::nop: //no-op
 			break;
 		case op_code::inc: //increase value of cell under the pointer
-			*cell_pointer_reg_ += instruction.argument_;
+			*cell_pointer_reg_ += static_cast<memory_cell_t>(instruction.argument_);
 			break;
 		case op_code::dec: //decrease the value of cell under the pointer
-			*cell_pointer_reg_ -= instruction.argument_;
+			*cell_pointer_reg_ -= static_cast<memory_cell_t>(instruction.argument_);
 			break;
 		case op_code::left: //move the pointer to left
 			left(instruction.argument_);
@@ -98,14 +98,14 @@ namespace bf::execution {
 				program_counter_ = instruction.destination_; //TODO same as for op_code::jump
 			break;
 		case op_code::read: //read char from stdin
-			if (int const read = emulated_program_stdin_->get(); read == std::char_traits<char>::eof()) {
+			if (int const read_char = emulated_program_stdin_->get(); read_char == std::char_traits<char>::eof()) {
 				std::cout << "\nEnd of input stream hit.\n";
 				if (stdin_eof_)
 					flags_register_.os_interrupt() = true;
 				stdin_eof_ = true;
 			}
 			else
-				*cell_pointer_reg_ = static_cast<memory_cell_t>(read);
+				*cell_pointer_reg_ = static_cast<memory_cell_t>(read_char);
 			break;
 		case op_code::write: //print char to stdout
 			emulated_program_stdout_->put(static_cast<char>(*cell_pointer_reg_));
@@ -115,7 +115,7 @@ namespace bf::execution {
 			flags_register_.breakpoint_hit() = true;
 			break;
 		case op_code::load_const:
-			*cell_pointer_reg_ = instruction.argument_;
+			*cell_pointer_reg_ = static_cast<memory_cell_t>(instruction.argument_);
 			break;
 		default: //die painfully
 			--executed_instructions_counter_;
@@ -128,7 +128,7 @@ namespace bf::execution {
 	void cpu_emulator::execution_stops_callback() {
 		emulated_program_stdout_->flush();
 		execution_state new_state = execution_state::interrupted;
-		if (program_counter_ == instructions_.size()) {
+		if (program_counter_ > 0 && instructions_[program_counter_ - 1].op_code_ == op_code::program_exit) {
 			std::cout << "\nExecution has finished.\n";
 			new_state = execution_state::finished; //set state to finished. Memory may still be inspected, but PC is out of bounds
 		}
@@ -140,7 +140,7 @@ namespace bf::execution {
 
 	void cpu_emulator::do_execute() {
 		assert(has_program()); //may be removed later if I find a case in which it is undesirable to crash if no program is contained.
-		assert(program_counter_ >= 0 && program_counter_ <= static_cast<int>(instructions_.size())); //Sanity check for PC not out of bounds
+		assert(program_counter_ >= 0 && program_counter_ <= static_cast<std::ptrdiff_t>(instructions_.size())); //Sanity check for PC not out of bounds
 		assert(!flags_register_.halt());
 		state_ = execution_state::running;
 		flags_register_.os_interrupt() = false;
@@ -155,7 +155,7 @@ namespace bf::execution {
 		}
 
 		//the execution cannot proceed unless the halt flag is cleared 
-		for (; !flags_register_.halt() && program_counter_ < static_cast<int>(instructions_.size());) {
+		for (; !flags_register_.halt() && program_counter_ < static_cast<std::ptrdiff_t>(instructions_.size());) {
 			assert(program_counter_ >= 0);
 			do_execute(instructions_[program_counter_++]); //increment PC immediatelly after instruction fetching to mimic real-life CPU 
 			if (flags_register_.breakpoint_hit()) {
@@ -174,5 +174,5 @@ namespace bf::execution {
 		}
 		execution_stops_callback();
 	}
-}
+} //namespace bf::execution
 

@@ -5,12 +5,13 @@
 #include <fstream>
 #include <iostream>
 #include <charconv>
+#include <type_traits>
 
 namespace bf::utils {
 
-	int check_command_argc(int const min, int const max, cli::command_parameters_t const &argv) {
+	int check_command_argc(std::ptrdiff_t const min, std::ptrdiff_t const max, cli::command_parameters_t const& argv) {
 		//we do not really care about overflows here, noone is gonna pass two billion arguments
-		int const actual = static_cast<int>(argv.size());
+		std::ptrdiff_t const actual = static_cast<std::ptrdiff_t>(argv.size());
 		if (actual < min) { //At least min arguments expected
 			cli::print_command_error(cli::command_error::argument_required);
 			return 1;
@@ -30,31 +31,30 @@ namespace bf::utils {
 		([^"]\S*?)  match anything but quotes and continue matching any number of non whitespace characters captured lazily
 		|(".*?("|$))) or match quotes and any number of lazily matched characters followed by either quotes or EOL
 		(\s|$)  either whitespace or end of line in case the last argument is being matched (skipped from selection)
-		After the given string has been matched against this regex, we will have ended up with range of simple tokens and those more complex tokens
+		After the passed string has been matched against this regex, we will end up with a range of simple tokens and those more complex tokens
 		preceded by quotes and possibly ending with quotes as well. We are obliged to to get rid of these before returning.
 		*/
-		static std::regex const token_regex{ R"(\s*(([^"]\S*?)|(".*?("|$)))(\s|$))", std::regex_constants::optimize | std::regex_constants::ECMAScript };
+		static std::regex const token_regex{ R"(\s*(([^"]\S*?)|(".*?("|$)))(\s*|$))", std::regex_constants::optimize | std::regex_constants::ECMAScript };
 		using token_iterator = std::regex_token_iterator<std::string_view::const_iterator>; //I use this convenience using declaration to simplify the call to std::transform
 
 		std::vector<std::string_view> tokens;
 
+		token_iterator begin{ str.cbegin(), str.cend(), token_regex, 1 }; //selecting just the first submatch on success
 		//transform range represented by regex_token_iterators using lambda. The iterator traverses the string trying to match it against token_regex 
-		std::transform(token_iterator{ str.cbegin(), str.cend(), token_regex, 1 }, //and selecting just the first submatch on success
-			token_iterator{}, std::back_inserter(tokens),  //results of transformations are being push_backed into the vector during the transformation
-			[](std::sub_match<std::string_view::const_iterator> const &match) -> std::string_view { //take each sub_match and transform it into a string_view
-				std::string_view token{ &*match.first, static_cast<std::size_t>(std::distance(match.first, match.second)) };
-				if (token.front() == '\"') {   //if this submatch starts with quotes, we need to get rid of them by advancing the iterator one char forward
-					token.remove_prefix(1);
-					if (token.back() == '\"') //if it ends with quotes, move end of submatch one char back. We have to count to -1 to get the last character
-						token.remove_suffix(1);
-				} //return std::string_view constructed from pointer and number of characters between the beginning and end of match 
-				return token;
-			}
-		);
+		std::transform(begin, token_iterator{}, std::back_inserter(tokens),  //results of transformations are being push_backed into the vector during the transformation
+			[](std::sub_match<std::string_view::const_iterator> const& match) -> std::string_view { //take each sub_match and transform it into a string_view
+				return std::string_view{ &match.first[0], static_cast<std::size_t>(std::distance(match.first, match.second)) };
+			});
+		for (auto& token : tokens)
+			if (token.front() == '\"') {   //if this submatch starts with quotes, we need to get rid of them by advancing the iterator one char forward
+				token.remove_prefix(1);
+				if (token.back() == '\"') //if it ends with quotes, move end of submatch one char back. We have to count to -1 to get the last character
+					token.remove_suffix(1);
+			} //return std::string_view constructed from pointer and number of characters between the beginning and end of match 
 		return tokens;
 	}
 
-	std::vector<std::string_view> split_to_lines(std::string_view str) {
+	std::vector<std::string_view> split_to_lines(std::string_view const str) {
 		//This function has very similar implementation as function above (split_to_tokens), so excuse the lack of comments, it's 2:37 a.m.
 		static std::regex const new_line_regex{ "\n" }; //matches any number of characters other that new-line
 		using token_iterator = std::regex_token_iterator<std::string_view::const_iterator>;
@@ -65,7 +65,7 @@ namespace bf::utils {
 		//we are interested in submatch -1 (="stuff that was left unmatched" as stated at cppreference.com)
 		std::transform(token_iterator{ str.cbegin(), str.cend(), new_line_regex, -1 },
 			token_iterator{}, std::back_inserter(result),
-			[](std::sub_match<std::string_view::const_iterator>const &match) -> std::string_view {
+			[](std::sub_match<std::string_view::const_iterator>const& match) -> std::string_view {
 				//constructs std::string_view from pointer and size by means of uniform initialization 
 				//(offset of current match from the beginning of view and length of current match)
 				return { &match.first[0], static_cast<std::size_t>(std::distance(match.first, match.second)) };
@@ -75,16 +75,16 @@ namespace bf::utils {
 		return result;
 	}
 
-	std::string_view get_line(std::string_view const str, int line_num) {
+	std::optional<std::string_view> get_line(std::string_view const str, std::ptrdiff_t line_num) {
 		assert(line_num > 0);
 		std::string_view::const_iterator after_new_line = str.cbegin();
 		for (--line_num; line_num; --line_num) {
 			after_new_line = std::find(after_new_line, str.cend(), '\n');
 			if (after_new_line == str.cend())
-				return { str.data(), 0 }; //invalid value
-			std::advance(after_new_line, 1);
+				return std::string_view{ str.data(), 0 }; //invalid value
+			++after_new_line;
 		}
-		return { &*after_new_line, static_cast<std::size_t>(std::distance(after_new_line,
+		return std::string_view{ &*after_new_line, static_cast<std::size_t>(std::distance(after_new_line,
 			std::find(std::next(after_new_line), str.cend(), '\n'))) };
 	}
 
@@ -101,16 +101,16 @@ namespace bf::utils {
 	}
 
 	bool prompt_user_yesno() {
-		std::cout << "Please, choose yes or no. [Y/N].\t";
+		std::cout << "Please, choose either yes or no. [Y/N].\t";
 		char input_char;
-		do {
-			std::cin >> input_char;
-			input_char = std::toupper(input_char, std::locale{});
-		} while (input_char != 'Y' && input_char != 'N'); //prompt until the user types something meaningful
+		do 
+			input_char = std::toupper(static_cast<char>(std::cin.get()), std::locale{});
+		while (input_char != 'Y' && input_char != 'N'); //prompt until the user types something meaningful
 		std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); //flush EOL from stdin
 
 		return input_char == 'Y';
 	}
+
 
 	std::optional<int> parse_nonnegative_argument(std::string_view const view) {
 		int result;
@@ -132,4 +132,4 @@ namespace bf::utils {
 			return result;
 	}
 
-}
+} //namespace bf::utils

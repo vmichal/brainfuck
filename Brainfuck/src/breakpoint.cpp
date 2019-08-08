@@ -52,7 +52,8 @@ namespace bf::breakpoints {
 			: iter_before_gap->first + 1; //the next following element has key GREATER than this_iterator's key plus one
 	}
 
-	breakpoint* breakpoint_manager::do_set_breakpoint_at(int address) {
+	breakpoint* breakpoint_manager::do_set_breakpoint_at(std::ptrdiff_t const address) {
+		assert(address >= 0);
 		if (!execution::emulator.has_program()) {
 			std::cerr << "No program has been flashed to CPU's memory.\n";
 			return nullptr;
@@ -72,22 +73,25 @@ namespace bf::breakpoints {
 		// breakpoint_id of the new breakpoint. Smallest non-negative integer not yet denoting an existing breakpoint 
 		int const new_index = get_unused_breakpoint_id();
 		//creates new breakpoint struct and places it into the map of defined breakpoints
-		breakpoint* const new_breakpoint_ptr = std::addressof(all_breakpoints_[new_index] = breakpoint{ new_index, address });
+		breakpoint* const new_breakpoint_ptr = std::addressof(all_breakpoints_[new_index] = breakpoint{new_index, address});
+
+
+
 		bp_location.breakpoints_here_.insert(new_breakpoint_ptr); //insert pointer to the new breakpoint
 		std::cout << "New breakpoint " << new_index << " created.\n";
 		return new_breakpoint_ptr;
 	}
 
-	int breakpoint_manager::set_breakpoint_at(int address) {
+	int breakpoint_manager::set_breakpoint_at(std::ptrdiff_t const address) {
 		return do_set_breakpoint_at(address) == nullptr;
 	}
 
-	instruction const& breakpoint_manager::get_replaced_instruction_at(int const address) const {
+	instruction const& breakpoint_manager::get_replaced_instruction_at(std::ptrdiff_t const address) const {
 		assert(breakpoint_locations_.count(address));
 		return breakpoint_locations_.at(address).replaced_instruction_;
 	}
 
-	int breakpoint_manager::set_temp_breakpoint_at(int address) {
+	int breakpoint_manager::set_temp_breakpoint_at(std::ptrdiff_t address) {
 		breakpoint* const bp = do_set_breakpoint_at(address);
 		if (bp)
 			temp_breakpoints_.insert(bp);
@@ -114,7 +118,7 @@ namespace bf::breakpoints {
 		all_breakpoints_.erase(bp->id_); //finally erase the breakpoint's data itself
 	}
 
-	void breakpoint_manager::handle_unknown_breakpoint_at(int address) {
+	void breakpoint_manager::handle_unknown_breakpoint_at(std::ptrdiff_t address) {
 		assert(breakpoint_locations_.count(address) == 0); //sanity check; this location must be empty
 
 		std::cout << "Encountered an unknown breakpoint at address " << address << ".\n"
@@ -128,7 +132,7 @@ namespace bf::breakpoints {
 		assert(breakpoint_locations_.at(address).breakpoints_here_.size() == 1); //sanity check; this location shall now contain just one breakpoint
 	}
 
-	void breakpoint_manager::handle_breakpoints_at(int address) {
+	void breakpoint_manager::handle_breakpoints_at(std::ptrdiff_t address) {
 		if (breakpoint_locations_.count(address) == 0) //if an unknown breakpoint had been hit, 
 			return handle_unknown_breakpoint_at(address); //initiate the defining procedure 
 
@@ -145,7 +149,7 @@ namespace bf::breakpoints {
 		hit_breakpoints_.clear(); //remove processed breakpoints
 	}
 
-	bool breakpoint_manager::should_ignore_breakpoints_at(int const address) {
+	bool breakpoint_manager::should_ignore_breakpoints_at(std::ptrdiff_t const address) {
 		//If we encounter a breakpoint which has not been set via a command (i.e. programmatical breakpoint),
 		if (breakpoint_locations_.count(address) == 0) //don't ignore. Let function handle_breakpoint take care of it
 			return false;
@@ -165,14 +169,14 @@ namespace bf::breakpoints {
 		return hit_breakpoints_.empty(); //if none has been hit, ignore them
 	}
 
-	std::unordered_set<breakpoint*> const& breakpoint_manager::get_breakpoints_at(int address) {
+	std::unordered_set<breakpoint*> const& breakpoint_manager::get_breakpoints_at(std::ptrdiff_t const address) {
 		assert(execution::emulator.has_program());
 		assert(address >= 0 && address < execution::emulator.instructions_size());
 		assert(breakpoint_locations_.count(address)); //sanity check - this function assumes that the breakpoint location exists
 		return breakpoint_locations_.at(address).breakpoints_here_;
 	}
 
-	int breakpoint_manager::count_breakpoints_at(int address) {
+	int breakpoint_manager::count_breakpoints_at(std::ptrdiff_t const address) {
 		assert(execution::emulator.has_program());
 		assert(address >= 0 && address < execution::emulator.instructions_size());
 		return breakpoint_locations_.count(address) ?
@@ -198,7 +202,7 @@ namespace bf::breakpoints {
 				static constexpr std::array<int, 4> const widths = { 6,12,10,8 }; //field widths
 
 				buffer << "Defined breakpoints:\n" << std::right << std::setw(widths[0]) << "ID" << std::setw(widths[1]) << "ADDRESS"
-					<< std::setw(widths[2]) << "ENABLED" << std::setw(widths[4]) << "IGNORE COUNT\n";
+					<< std::setw(widths[2]) << "ENABLED" << std::setw(widths[3]) << "IGNORE COUNT\n";
 
 				for (auto const& [id, breakpoint] : bp_manager.all_breakpoints())
 					buffer << std::setw(widths[0]) << std::right << breakpoint.id_ << '.' << std::setw(widths[1]) << breakpoint.address_
@@ -297,9 +301,9 @@ namespace bf::breakpoints {
 
 	}
 	void initialize() {
-		ASSERT_CALLED_ONLY_ONCE;
+		ASSERT_IS_CALLED_ONLY_ONCE;
 
-		cli::add_command("break", cli::command_category::debug, "Creates a new breakpoint or lists existing ones.",
+		cli::add_command("break", cli::command_category::debugging, "Creates a new breakpoint or lists existing ones.",
 			"Usage: \"break\" [address]\n"
 			"If no argument is specified, the command prints a list of all set breakpoints.\n"
 			"If an integer address is specified, the command sets a new breakpoint at the given location."
@@ -308,25 +312,26 @@ namespace bf::breakpoints {
 		cli::add_command_alias("b", "break");
 		cli::add_command_alias("br", "break");
 
-		cli::add_command("tbreak", cli::command_category::debug, "Creates a temporary breakpoint.",
+		cli::add_command("tbreak", cli::command_category::debugging, "Creates a temporary breakpoint.",
 			"Usage: \"tbreak\" address\n"
 			"Creates a new breakpoint at specified location which will be automatically destroyed after it is hit for the first time."
 			, &tbreak_callback);
 
-		cli::add_command("ignore", cli::command_category::debug, "Sets breakpoint's ignore count.",
+		cli::add_command("ignore", cli::command_category::debugging, "Sets breakpoint's ignore count.",
 			"Usage: \"ignore\" breakpoint_number ignore_count\n"
 			"Sets the number of times the execution shall continue if the specified breakpoint is hit."
 			, &ignore_callback);
 
-		cli::add_command("disable", cli::command_category::debug, "Disables a breakpoint.",
+		cli::add_command("disable", cli::command_category::debugging, "Disables a breakpoint.",
 			"Usage: \"disable\" breakpoint_number\n"
 			"Disables the breakpoint with the same index as the specified parameter.\n"
 			"Disabled breakpoints are ignored during execution."
 			, &disable_callback);
-		cli::add_command("enable", cli::command_category::debug, "Enables a breakpoint.",
+		cli::add_command("enable", cli::command_category::debugging, "Enables a breakpoint.",
 			"Usage: \"enable\" breakpoint_num\n"
 			"Enables the breakpoint with the same index as the specified parameter.\n"
 			"Enabled breakpoints interrupt execution when hit.",
 			&enable_callback);
 	}
-}
+
+} //namespace bf::breakpoints

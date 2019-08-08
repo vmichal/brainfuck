@@ -22,17 +22,17 @@ namespace bf {
 	struct compilation_result {
 		std::string source_code_; //code that has been compiled
 		std::vector<syntax_error> syntax_errors_; //vector of encountered syntax_errors
-		std::vector<std::shared_ptr<basic_block>> basic_blocks_; //compiled code. Holds value iff syntax_errors_ is empty
+		std::vector<std::unique_ptr<basic_block>> basic_blocks_; //compiled code. Holds value iff syntax_errors_ is empty
 
 		template<typename A, typename B, typename C>
 		compilation_result(A&& source_code, B&& syntax_errors, C&& basic_blocks) noexcept
-			: source_code_(std::forward<A&&>(source_code)), 
-			syntax_errors_(std::forward<B&&>(syntax_errors)), 
-			basic_blocks_(std::forward<C&&>(basic_blocks))
+			: source_code_{ std::forward<A&&>(source_code) },
+			syntax_errors_{ std::forward<B&&>(syntax_errors) },
+			basic_blocks_{ std::forward<C&&>(basic_blocks) }
 		{}
 	};
 
-	namespace prev_compilation {
+	namespace previous_compilation {
 
 		/*Internal unique pointer to the result of last compilation. After the first compilation finishes, a meaningful value is set;
 		until then contains nullptr.*/
@@ -52,8 +52,8 @@ namespace bf {
 			assert(ready());
 
 			std::vector<instruction> res;
-			res.reserve(std::accumulate(prev_compilation_result->basic_blocks_.cbegin(), prev_compilation_result->basic_blocks_.cend(), 0,
-				[](int const tmp, std::shared_ptr<basic_block> const& block) {
+			res.reserve(std::accumulate(prev_compilation_result->basic_blocks_.cbegin(), prev_compilation_result->basic_blocks_.cend(), std::size_t(0),
+				[](std::size_t const tmp, std::unique_ptr<basic_block> const& block) -> std::size_t {
 					return tmp + block->ops_.size();
 				}));
 
@@ -64,12 +64,12 @@ namespace bf {
 			return res;
 		}
 
-		std::vector<std::shared_ptr<basic_block>> const& basic_blocks() {
+		std::vector<std::unique_ptr<basic_block>> const& basic_blocks() {
 			assert(ready());
 			return prev_compilation_result->basic_blocks_;
 		}
 
-		std::vector<std::shared_ptr<basic_block>>& basic_blocks_mutable() {
+		std::vector<std::unique_ptr<basic_block>>& basic_blocks_mutable() {
 			assert(ready());
 			return prev_compilation_result->basic_blocks_;
 		}
@@ -83,7 +83,8 @@ namespace bf {
 		bool ready() {
 			return static_cast<bool>(prev_compilation_result);
 		}
-	}
+
+	} //namespace bf::previous_compilation
 
 	class compiler {
 
@@ -108,7 +109,7 @@ namespace bf {
 			instructions_.reserve(2 + source_code.size()); //reserve enough space for all instructions and program prologue and epilogue
 			instructions_.emplace_back(op_code::program_entry, 1, -1); //the prologue - program's entry instruction
 
-			for (int source_offset = 0; source_offset != source_code.size(); ++source_offset)  //loop though the code char by char
+			for (std::size_t source_offset = 0; source_offset < source_code.size(); ++source_offset)  //loop though the code char by char
 				switch (source_code[source_offset]) { //and add a new instruction if the char is a command
 				case '+': instructions_.emplace_back(op_code::inc, 1, source_offset);	  break;
 				case '-': instructions_.emplace_back(op_code::dec, 1, source_offset);	  break;
@@ -181,7 +182,7 @@ namespace bf {
 			assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
 			assert(std::all_of(std::execution::par_unseq, jumps_.begin(), jumps_.end(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
 			//assert that all jump instructions are contained in the jumps_ vector
-			assert(jumps_.size() == std::count_if(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump(); }));
+			assert(jumps_.size() == std::size_t(std::count_if(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump(); })));
 			assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [this](instruction const& i) {return i.is_jump() ? std::find(jumps_.begin(), jumps_.end(), &i) != jumps_.end() : true; }));
 
 			//we have a std::vector<instruction *> containing jump instructions
@@ -189,7 +190,7 @@ namespace bf {
 
 			//number of the next label to be processed. Start at one (it is incremented after the loop body)
 			auto next_label = labels_.cbegin();
-			std::stack<std::pair<instruction*, int>> opened_loops; //pair of (pointer to the unconditional jump, number of label pointing to the following instruction)
+			std::stack<std::pair<instruction*, std::ptrdiff_t>> opened_loops; //pair of (pointer to the unconditional jump, number of label pointing to the following instruction)
 
 			for (instruction* const jump : jumps_)
 				switch (jump->op_code_) { //for each jump instruction perform an operation
@@ -210,7 +211,7 @@ namespace bf {
 					jump->destination_ = target_label_for_cj;
 
 					//The destination for unconditional jump from the opening brace is the label at the closing brace
-					uncond_jump->destination_ = static_cast<int>(std::distance(labels_.cbegin(), next_label));
+					uncond_jump->destination_ = std::distance(labels_.cbegin(), next_label);
 
 
 					opened_loops.pop();   //Must be the last statement, because structured binding to tuple-like structure introduces references! Otherwise dangling reference
@@ -223,7 +224,7 @@ namespace bf {
 			assert(std::none_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump() ? i.destination_ == 0xdead'beef : false; }));
 		}
 
-		std::vector<std::shared_ptr<basic_block>> construct_program_blocks() const {
+		std::vector<std::unique_ptr<basic_block>> construct_program_blocks() const {
 			{ //A lot of sanity checks...
 				assert(labels_.size() >= 2); //at least two labels must exist (entry one and the one past the end)
 				assert(instructions_.size() >= 2); //at least program_entry and program_exit must be present
@@ -232,36 +233,39 @@ namespace bf {
 				assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
 				assert(std::all_of(std::execution::par_unseq, jumps_.begin(), jumps_.end(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
 				//assert that all jump instructions are contained in the jumps_ vector
-				assert(jumps_.size() == std::count_if(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump(); }));
+				assert(jumps_.size() == std::size_t(std::count_if(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump(); })));
 				assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [this](instruction const& i) {return i.is_jump() ? std::find(jumps_.begin(), jumps_.end(), &i) != jumps_.end() : true; }));
 				//all instructions must have their destination different from 0xdead'beef placeholder value
 				assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump() ? i.destination_ != 0xdead'beef : true; }));
 			}
 
-			std::vector<std::shared_ptr<basic_block>> basic_blocks;
+			std::vector<std::unique_ptr<basic_block>> basic_blocks;
 			basic_blocks.reserve(labels_.size() - 1);
 
-			for (int index = 0; index < labels_.size() - 1; ++index)
-				basic_blocks.emplace_back(std::make_shared<basic_block>(index,
+			for (std::size_t index = 0; index < labels_.size() - 1; ++index)
+				basic_blocks.push_back(std::make_unique<basic_block>(static_cast<std::ptrdiff_t>(index),
 					std::vector(labels_[index], labels_[index + 1]), //instructions 
-					std::vector<std::shared_ptr<basic_block>>{}, //predecessors
+					std::vector<basic_block*>{}, //predecessors
 					nullptr, nullptr)); //natural and jump successor
 
 
-			for (int i = 0; i < basic_blocks.size()-1; ++i)
-				switch (auto const& last_instruction = basic_blocks[i]->ops_.back(); last_instruction.op_code_) {
+			assert(basic_blocks.size() >= 1); //otherwise the following loop would be infinite
+			for (std::size_t i = 0; i < basic_blocks.size() - 1; ++i)
+				switch (auto & last_instruction = basic_blocks[i]->ops_.back(); last_instruction.op_code_) {
 				case op_code::jump:
 				case op_code::jump_not_zero:
 
-					basic_blocks[i]->jump_successor_ = basic_blocks[last_instruction.destination_];
-					basic_blocks[last_instruction.destination_]->predecessors_.push_back(basic_blocks[i]);
+					basic_blocks[i]->jump_successor_ = basic_blocks[last_instruction.destination_].get();
+					basic_blocks[last_instruction.destination_]->predecessors_.push_back(basic_blocks[i].get());
+					//We set the target of this jump to some invalid value, because during the process of optimizations, we'll be using pointers
+					last_instruction.destination_ = 0xdead'beef;
 
 					if (last_instruction.op_code_ == op_code::jump)
 						break;
 
 				default:
-					basic_blocks[i]->natural_successor_ = basic_blocks[i + 1];
-					basic_blocks[i + 1]->predecessors_.push_back(basic_blocks[i]);
+					basic_blocks[i]->natural_successor_ = basic_blocks[i + 1].get();
+					basic_blocks[i + 1]->predecessors_.push_back(basic_blocks[i].get());
 
 					break;
 				}
@@ -271,7 +275,7 @@ namespace bf {
 
 	public:
 
-		std::vector<std::shared_ptr<basic_block>> compile(std::string_view const code) {
+		std::vector<std::unique_ptr<basic_block>> compile(std::string_view const code) {
 
 			/* STEPS OF THE COMPILATION PROCESS:
 				starting conditions:
@@ -309,11 +313,15 @@ namespace bf {
 
 			resolve_jump_targets();
 
-			return construct_program_blocks();
+
+			auto res = construct_program_blocks();
+			print_basic_blocks(res);
+			return res;
 		}
 
 	};
-		//<<[[>+<-]>[-]]
+
+	//<<[[>+<-]>[-]]
 
 	namespace {
 
@@ -323,19 +331,19 @@ namespace bf {
 			according to the compilation's outcome.	If there are no errors, new syntax_tree is generated,
 			otherwise only list of errors is saved. Returns true if compilation was OK.*/
 			bool do_compile(std::string code) { // takes code by value, because it is moved later
-				static compiler compiler;
+				thread_local static compiler compiler;
 
 				if (syntax_validation_is_ok(code)) { //first perform quick scan for errors. If there are none, proceed with compilation
 					auto code_blocks = compiler.compile(code);
 					assert(!code_blocks.empty()); //must be true, as the code had already undergone a syntax check
-					prev_compilation::prev_compilation_result = std::make_unique<compilation_result>(std::move(code), std::vector<syntax_error>{},
+					previous_compilation::prev_compilation_result = std::make_unique<compilation_result>(std::move(code), std::vector<syntax_error>{},
 						std::move(code_blocks)); //move the entry_block pointer
 					return true; //return true indicating that compilation did not encounter any errors
 				}
 				else { //quick scan found some errors. Scan again collecting all possible information
 					std::vector<syntax_error> syntax_errors = syntax_validation_detailed(code);
 					assert(syntax_errors.size()); //must contain some errors; we can assert this just for fun :D
-					prev_compilation::prev_compilation_result = std::make_unique<compilation_result>(std::move(code), std::move(syntax_errors), std::vector<std::shared_ptr<basic_block>>{}); //empty vector for illegal code
+					previous_compilation::prev_compilation_result = std::make_unique<compilation_result>(std::move(code), std::move(syntax_errors), std::vector<std::unique_ptr<basic_block>>{}); //empty vector for illegal code
 					return false; //indicate that compilation failed
 				}
 			}
@@ -360,7 +368,8 @@ namespace bf {
 				cli::print_command_error(cli::command_error::argument_not_recognized);
 				return std::nullopt;
 			}
-		}
+
+		} //namespace bf::`anonymous`::compile_callback_helper
 
 
 		/*Function callback for cli command "compile".
@@ -380,13 +389,13 @@ namespace bf {
 			//call helper function trying to compile the source code
 			bool const success = helper::do_compile(std::move(*source_code));
 			if (!success) {//compilation failed due to errors
-				std::size_t const err_count = prev_compilation::syntax_errors().size();
+				std::size_t const err_count = previous_compilation::syntax_errors().size();
 				std::cout << "Found " << err_count << " error" << utils::print_plural(err_count)
 					<< ". You may print more details using the \"errors\" command.\n";
 				return 1;
 			}
 			//compilation was successful 
-			std::size_t const instruction_count = prev_compilation::generate_executable_code().size();
+			std::size_t const instruction_count = previous_compilation::generate_executable_code().size();
 			std::cout << "Successfully compiled " << instruction_count << " instruction" << utils::print_plural(instruction_count) << ".\n";
 			return 0;
 		}
@@ -394,15 +403,15 @@ namespace bf {
 		/*Wrapper namespace for types and functions used by "errors_callback". Does not pollute global namespace, thankfully*/
 		namespace errors_callback_helper {
 
-			int print_error_detail(int const index) {
-				assert(prev_compilation::ready() && !prev_compilation::successful()); //if there was no compilation or it completed ok, we have an error
+			int print_error_detail(std::size_t const index) {
+				assert(previous_compilation::ready() && !previous_compilation::successful()); //if there was no compilation or it completed ok, we have an error
 
-				if (int const error_count = static_cast<signed>(prev_compilation::syntax_errors().size()); index >= error_count) {
+				if (std::size_t const error_count = previous_compilation::syntax_errors().size(); index >= error_count) {
 					std::cout << "Requested index " << index << " is out of bounds. Valid range is [0, " << error_count << ").\n";
 					return 5;
 				}
-				syntax_error const& error = prev_compilation::syntax_errors()[index];
-				std::string source_code_line{ utils::get_line(prev_compilation::source_code(), error.line_) };
+				syntax_error const& error = previous_compilation::syntax_errors()[index];
+				std::string source_code_line{ *utils::get_line(previous_compilation::source_code(), error.line_) };
 				std::replace(source_code_line.begin(), source_code_line.end(), '\t', ' '); //replace all tabs with spaces to prevent formatting errors
 
 				std::cout << std::right << std::setw(5) << index << std::left << "  Syntax error: " << error.message_ << " at (" << error.line_ << ", " << error.char_offset_
@@ -413,22 +422,23 @@ namespace bf {
 			/*Prints all syntax errors to stdout. If there had been no errors, does nothing.
 			if print_full is true, prints full information about all errors.*/
 			int print_syntax_errors(bool const print_full) {
-				assert(prev_compilation::ready() && !prev_compilation::successful()); //if there was no compilation or it completed ok, we have an error
+				assert(previous_compilation::ready() && !previous_compilation::successful()); //if there was no compilation or it completed ok, we have an error
 
 				if (print_full) {
-					for (int i = 0; i < static_cast<int>(prev_compilation::syntax_errors().size()); ++i)
+					for (std::size_t i = 0; i < previous_compilation::syntax_errors().size(); ++i)
 						print_error_detail(i);
 					return 0;
 				}
 				else {
 					int index = 0;
-					for (auto const& error : prev_compilation::syntax_errors())
+					for (auto const& error : previous_compilation::syntax_errors())
 						std::cout << std::right << std::setw(5) << index++ << std::left << ". syntax error: "
 						<< error.message_ << " at (" << error.line_ << ", " << error.char_offset_ << ").\n";
 					return 0;
 				}
 			}
-		}
+
+		} //namespace bf::`anonymous`::namespace errors_callback_helper
 
 		/*Function callback for cli command "errors".
 		Expects single argument and depending on its value does various stuff and prints all syntax errors if some compilation had alredy been performed
@@ -437,11 +447,11 @@ namespace bf {
 			namespace helper = errors_callback_helper;
 			if (int const ret_code = utils::check_command_argc(2, 2, argv))
 				return ret_code;
-			if (!prev_compilation::ready()) {//there hasn't been any compilation performed yet
+			if (!previous_compilation::ready()) {//there hasn't been any compilation performed yet
 				std::cerr << "No compilation has been performed. Compile the program with the \"compile\" command first.\n";
 				return 3;
 			}
-			if (prev_compilation::successful()) {
+			if (previous_compilation::successful()) {
 				std::cout << "Previous compilation was successful.\n";
 				return 0;
 			}
@@ -451,7 +461,7 @@ namespace bf {
 			else if (argv[1].compare("full") == 0)
 				return helper::print_syntax_errors(true);
 			else if (argv[1].compare("count") == 0) {
-				if (std::size_t const count = prev_compilation::syntax_errors().size(); count == 1u)
+				if (std::size_t const count = previous_compilation::syntax_errors().size(); count == 1u)
 					std::cout << "There has been one error.\n";
 				else
 					std::cout << "There have been " << count << " errors.\n";
@@ -464,20 +474,21 @@ namespace bf {
 				return 4;
 			}
 		}
-	}
+
+	} //namespace bf::`anonymous namespace`
 
 
 	void compiler_initialize() {
-		ASSERT_CALLED_ONLY_ONCE;
+		ASSERT_IS_CALLED_ONLY_ONCE;
 		using namespace bf::cli;
-		cli::add_command("compile", command_category::compilation, "Compiles given source code.",
+		add_command("compile", command_category::compilation, "Compiles given source code.",
 			"Usage: \"compile\" [\"code\" or \"file\"] argument\n"
 			"argument is either string of characters interpreted as source code if \"code\" is specified\n"
 			"or a name of file containing the source code in case \"file\" is specified.\n"
 			"Additional information about the outcome of the compilation can be queried by commands from the \"compilation\" group."
 			, &compile_callback);
 
-		cli::add_command("errors", command_category::compilation, "Queries the results of previous compilation and prints syntax errors.",
+		add_command("errors", command_category::compilation, "Queries the results of previous compilation and prints syntax errors.",
 			"Usage: \"errors\" argument\n"
 			"Single argument is expected and its meaning is heavily dependent on context.\n"
 			"\targument == \"all\" => list of syntax errors is simply printed out\n"
@@ -489,4 +500,4 @@ namespace bf {
 	}
 
 
-} // namespace ::bf
+} // namespace bf

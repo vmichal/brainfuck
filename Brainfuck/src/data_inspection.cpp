@@ -31,9 +31,9 @@ namespace bf::data_inspection {
 				instruction
 			};
 
-			int sizeof_data_type(data_type const type) {
+			std::ptrdiff_t sizeof_data_type(data_type const type) {
 				//Map of data types to their sizes in bytes (instructions dont use void* arithmetic, but normal typed ptr => they have size one)
-				static std::unordered_map<data_type, int> const data_sizes{
+				static std::unordered_map<data_type, std::ptrdiff_t> const data_sizes{
 					{data_type::byte,		 1},
 					{data_type::word,		 2},
 					{data_type::dword,		 4},
@@ -73,8 +73,8 @@ namespace bf::data_inspection {
 
 			/*Structure of all parameters required for a memory inspection. Specifies location and direction of inspection, its size, type of elements and printing format.*/
 			struct request_params {
-				int count_;						//how many elements shall be printed
-				void* address_;				//pointer to the requested memory block 
+				std::ptrdiff_t count_;			//how many elements shall be printed
+				void* address_;					//pointer to the requested memory block 
 				data_type type_;				//type of data (determines e.g. size in bytes)
 				printing_format format_;		//format of printing (determines e.g. signedness)
 				bool print_preceding_memory_;	//determines whether the address_ field is the beginning or the end of memory block 
@@ -92,7 +92,7 @@ namespace bf::data_inspection {
 					printing_format format_ = printing_format::none; //stores info about the requested format of printing
 
 					bool error_occured_ = false;
-					char const* iterator_, * end_;
+					char const* iterator_ = nullptr, * end_ = nullptr;
 
 					//Extracts a number from the string and interprets it as the count
 					void parse_count() {
@@ -155,7 +155,7 @@ namespace bf::data_inspection {
 						bool examine_before = false;
 
 						//Loop through the passed string searching for type and format specifiers as well as a number (count)
-						for (iterator_ = format_string.data(), end_ = iterator_ + format_string.size(); !error_occured_ && iterator_ != end_; ) {
+						for (iterator_ = format_string.data(), end_ = std::next(iterator_, format_string.size()); !error_occured_ && iterator_ != end_; ) {
 							if (*iterator_ == '-') {
 								++iterator_;
 								if (!examine_before)
@@ -224,7 +224,8 @@ namespace bf::data_inspection {
 					if (expression.empty()) //empty expression does not need to be split further, does it?
 						return {};
 					std::vector<std::string_view> tokens;
-					std::string_view::const_iterator iter = expression.cbegin(), end = expression.cend();
+					std::string_view::const_iterator iter = expression.cbegin(),
+						end = expression.cend();
 
 					//Check for and handle situation that the expression starts with an operator
 					if (char c = *iter; c == '+') //if we start with a single prefix plus, we ignore it
@@ -263,13 +264,23 @@ namespace bf::data_inspection {
 
 
 					void match_register() {
-						if (!expects_value_ || register_used_) //if we already used a register or we don't expect value, expression has an error
+						if (!expects_value_ || register_used_) {//if we already used a register or we don't expect value, expression has an error
 							error_ = true;
-						if ((expected_address_space_ == address_space::code && current_token_->compare("$pc"))
-							|| (expected_address_space_ == address_space::data && current_token_->compare("$cpr"))) {
-							std::cout << "Address space conflict. Data and code reside in separate locations.\n";
-							error_ = true;
+							return;
 						}
+
+						switch (expected_address_space_) {
+						case address_space::code: //TODO replace std::string_view::compare with !=
+							error_ = current_token_->compare("$pc");
+							break;
+						case address_space::data:
+							error_ = current_token_->compare("$cpr");
+							break;
+							ASSERT_NO_OTHER_OPTION;
+						}
+						if (error_)
+							std::cout << "Address space conflict. Data and code reside in separate locations.\n";
+
 						register_used_ = true;
 						expects_value_ = false;
 					}
@@ -289,7 +300,7 @@ namespace bf::data_inspection {
 
 
 				public:
-					expression_validator(address_space space) : expected_address_space_(space) {}
+					explicit expression_validator(address_space space) : expected_address_space_{ space } {}
 
 					bool operator()(std::vector<std::string_view> const& tokens) {
 						if (tokens.size() % 2 == 0) //even number of tokens means that some binary operator does not have two operands
@@ -313,7 +324,7 @@ namespace bf::data_inspection {
 				class expression_evaluator {
 
 					struct abstract_node {
-						virtual int evaluate() = 0;
+						virtual std::ptrdiff_t evaluate() = 0;
 						virtual ~abstract_node() = 0;
 					};
 
@@ -322,7 +333,7 @@ namespace bf::data_inspection {
 					Is further specialized with functors from the standard library.*/
 					struct operation_node : abstract_node {
 
-						operation_node(abstract_node* l, abstract_node* r) : left_(l), right_(r) {}
+						operation_node(abstract_node* l, abstract_node* r) : left_{ l }, right_{ r } {}
 						~operation_node() override { delete left_; delete right_; }
 
 						abstract_node* left_, * right_;
@@ -334,7 +345,7 @@ namespace bf::data_inspection {
 
 					struct plus_node : operation_node {
 						using operation_node::operation_node;
-						int evaluate() override {
+						std::ptrdiff_t evaluate() override {
 							return left_->evaluate() + right_->evaluate();
 						}
 
@@ -342,7 +353,7 @@ namespace bf::data_inspection {
 
 					struct minus_node :operation_node {
 						using operation_node::operation_node;
-						int evaluate() override {
+						std::ptrdiff_t evaluate() override {
 							return left_->evaluate() - right_->evaluate();
 						}
 
@@ -350,7 +361,7 @@ namespace bf::data_inspection {
 
 					struct mul_node : operation_node {
 						using operation_node::operation_node;
-						int evaluate() override {
+						std::ptrdiff_t evaluate() override {
 							return left_->evaluate() * right_->evaluate();
 						};
 					};
@@ -358,18 +369,18 @@ namespace bf::data_inspection {
 					/*Node containing number literal, whose evaluation simply yields this literal.*/
 					struct literal_node : abstract_node {
 
-						literal_node(int const i) : value_(i) {}
+						explicit literal_node(std::ptrdiff_t const i) : value_{ i } {}
 						~literal_node() override = default;
 
-						int const value_;
+						std::ptrdiff_t const value_;
 
-						int evaluate() override {
+						std::ptrdiff_t evaluate() override {
 							return value_;
 						}
 
 					};
 
-					int evaluate_token(std::string_view const token) {
+					std::ptrdiff_t evaluate_token(std::string_view const token) {
 						if (std::isdigit(token.front(), std::locale{})) { //number is converted to integer
 							std::optional<int> const value = utils::parse_nonnegative_argument(token);
 							return *value;
@@ -378,7 +389,7 @@ namespace bf::data_inspection {
 							if (token.compare("$pc") == 0) //program counter
 								return execution::emulator.program_counter();
 							else if (token.compare("$cpr") == 0) //cell pointer register
-								return execution::emulator.cell_pointer_register();
+								return execution::emulator.cell_pointer_offset();
 							else
 								MUST_NOT_BE_REACHED; //validating function should have cought all errors and typos
 						}
@@ -386,10 +397,10 @@ namespace bf::data_inspection {
 					}
 
 				public:
-					int operator()(std::vector<std::string_view> const& tokens) {
+					std::ptrdiff_t operator()(std::vector<std::string_view> const& tokens) {
 						assert(tokens.size() % 2 == 1);//sanity check, the number of tokens has to be odd (all operators are binary)
 
-						if (tokens.size() == 1u) //if we got just a single arg, evaluate it straight away
+						if (tokens.size() == 1) //if we got just a single arg, evaluate it straight away
 							return evaluate_token(tokens[0]);
 						//otherwise build a tree using heap pointers 
 
@@ -413,7 +424,7 @@ namespace bf::data_inspection {
 
 
 						//continue building the tree one operation and one value at a time
-						for (int i = 3; i < static_cast<int>(tokens.size()); i += 2) {
+						for (std::size_t i = 3; i < tokens.size(); i += 2) {
 							literal_node* const new_right = new literal_node{ evaluate_token(tokens[i + 1]) };
 							switch (tokens[i].front()) {
 							case '+':
@@ -425,26 +436,26 @@ namespace bf::data_inspection {
 							case '*':
 								root->right_ = new mul_node{ root->right_, new_right };
 								break;
-								ASSERT_NO_OTHER_OPTION
+								ASSERT_NO_OTHER_OPTION;
 							}
 						}
-						int const result = root->evaluate();//recursively evaluate the entire expression,
+						std::ptrdiff_t const result = root->evaluate();//recursively evaluate the entire expression,
 						delete root;  //delete all the allocated nodes
 						return result; //and return result
 					}
 				};
 
 				//pure virtual destructor must have a body since it's eventually called anyway
-				inline expression_evaluator::abstract_node::~abstract_node() {}
+				inline expression_evaluator::abstract_node::~abstract_node() = default;
 
 				/*In case evaluation of expression results in a negative memory_offset, this function recalculates the memory_offset to make the inspected memory
 				block fit in between the bounds of valid adress spaces. The memory block is shrinked from the beginning in the process.*/
-				int recalculate_negative_address(int& address_offset, int& count, data_type const requested_type) {
+				int recalculate_negative_address(std::ptrdiff_t& address_offset, std::ptrdiff_t& count, data_type const requested_type) {
 
 					assert(address_offset < 0);
 
 					//TODO branch on element_size != 1 to speed up recalculations for instructions and characters as well as bytes
-					int const element_size = sizeof_data_type(requested_type);
+					std::ptrdiff_t const element_size = sizeof_data_type(requested_type);
 
 					//number of elements we have to skip whatever happens
 					auto [skipped_count, remainder] = std::div(-address_offset, element_size);
@@ -481,7 +492,7 @@ namespace bf::data_inspection {
 						return 4;
 					}
 
-					int memory_offset = expression_evaluator{}(expression_pieces);		//calculate the memory offset specified by the user
+					std::ptrdiff_t memory_offset = expression_evaluator{}(expression_pieces);		//calculate the memory offset specified by the user
 					if (request.print_preceding_memory_) //and take the possible inversion of direction into account
 					//if the user requested printing memory cells before address, decrease the starting offset to the address of first printed element
 						memory_offset -= request.count_ * sizeof_data_type(request.type_);
@@ -495,7 +506,7 @@ namespace bf::data_inspection {
 							std::cerr << "Specified address was out of bounds.\n";
 							return 2;
 						}
-						request.address_ = static_cast<unsigned char*>(execution::emulator.memory_begin()) + memory_offset;
+						request.address_ = static_cast<char*>(execution::emulator.memory_begin()) + memory_offset;
 					}
 					else { //we are working in the instruction memory
 						if (memory_offset >= execution::emulator.instructions_size()) {//we want an instruction behind the end of memory
@@ -522,7 +533,8 @@ namespace bf::data_inspection {
 					int const ret_code = resolve_address(request, address_string);
 					return { request, ret_code };
 				}
-			}
+
+			} //namespace bf::data_inspection::`anonymous`::parsing
 
 			/*Functions in this namespace are helpers to ease memory examination. They all behave almost the same,
 			take an address at which they shall start and keep printing elements until count reaches zero or they run out of memory.
@@ -535,7 +547,7 @@ namespace bf::data_inspection {
 				template<typename ELEMENT_TYPE>
 				struct inspected_memory_region {
 					ELEMENT_TYPE const* begin_, * const end_;
-					int const unreachable_count_;
+					std::ptrdiff_t const unreachable_count_;
 				};
 
 				/*Get boundaries of memory region program may examine. Accepts an address at which inspection is to be started and requested number of elements.
@@ -543,7 +555,7 @@ namespace bf::data_inspection {
 				This memory region is then returned as pair of pointers to the beginnign and end. Additionally the number of elements which were requested,
 				but did not fit into the memory is returned as well.*/
 				template<typename ELEMENT_TYPE>
-				inspected_memory_region<ELEMENT_TYPE> get_inspected_memory_region(void* const address, int const requested_element_count) {
+				inspected_memory_region<ELEMENT_TYPE> get_inspected_memory_region(void* const address, std::ptrdiff_t const requested_element_count) {
 					//sanity check; this is an internal function which shall run safely (address must be located somewhere within cpu¨s memory)
 					assert(address >= execution::emulator.memory_begin() && address < execution::emulator.memory_end());
 
@@ -552,7 +564,7 @@ namespace bf::data_inspection {
 
 
 					//Actual number of elements is the lower from maximal possible number and requested count
-					int const element_count = std::min<int>(bytes_to_end / sizeof(ELEMENT_TYPE), requested_element_count);
+					std::ptrdiff_t const element_count = std::min<std::ptrdiff_t>(bytes_to_end / sizeof(ELEMENT_TYPE), requested_element_count);
 					if (element_count == 0)
 						std::cout << "No element can be printed, too close to the memory's bounds!\n";
 
@@ -564,7 +576,7 @@ namespace bf::data_inspection {
 
 				/*Helper function for do_print. If the given character is printable, it is returned as it is. If it denotes an escape
 				sequence, a short string represenation is printed. Otherwise hex value is printed.*/
-				std::string const get_readable_char_representation(char const c) {
+				std::string get_readable_char_representation(char const c) {
 					static  std::unordered_map<char, std::string> const escape_seqs{
 						{'\0', "NUL"},
 						{'\n', "LF"},
@@ -579,9 +591,9 @@ namespace bf::data_inspection {
 					if (escape_seqs.count(c)) //escape sequences
 						return escape_seqs.at(c);
 
-					char buffer[8] = { '0', 'x', '\0', '\0', '\0', '\0', '\0', '\0' }; //TODO maybe must add remaining 5 initializers
-					std::to_chars(buffer + 2, buffer + sizeof(buffer), static_cast<unsigned int>(c), 16);
-					return buffer; //hex value for others
+					std::array<char, 8> buffer = { "0x" }; 
+					std::to_chars(buffer.data() + 2, buffer.data() + buffer.size(), static_cast<unsigned int>(c), 16);
+					return buffer.data(); //hex value for others
 				}
 
 				/*I've been writing this function for half an hour and am fed up with it, so comment has to wait for now.
@@ -602,7 +614,7 @@ namespace bf::data_inspection {
 				printed one by one advancing the pointer until it traverses the entire sequence. The function then returns.
 				*/
 				template<typename ELEMENT_TYPE, std::ios_base& (*RADIX_MANIPULATOR)(std::ios_base&), int NUMBER_WIDTH>
-				void do_print_data(void* const address, int const count) {
+				void do_print_data(void* const address, std::ptrdiff_t const count) {
 					//Get boundaries between which it is safe to read values from memory
 					inspected_memory_region<ELEMENT_TYPE> valid_memory = get_inspected_memory_region<ELEMENT_TYPE>(address, count);
 					if (count == valid_memory.unreachable_count_) {  //we are too close to boundary, must return
@@ -616,7 +628,7 @@ namespace bf::data_inspection {
 						stream << std::setw(NUMBER_WIDTH) << i * sizeof(ELEMENT_TYPE);
 					stream << std::setfill('0') << std::showbase << "\n\n";
 
-					std::ptrdiff_t memory_offset = std::distance(static_cast<char const*>(execution::emulator.memory_begin()), static_cast<char const*>(static_cast<void const *>(valid_memory.begin_)));
+					std::ptrdiff_t memory_offset = std::distance(static_cast<char const*>(execution::emulator.memory_begin()), static_cast<char const*>(static_cast<void const*>(valid_memory.begin_)));
 
 					//While there are more elements than can fit on a single line, print them by lines
 					while (std::distance(valid_memory.begin_, valid_memory.end_) >= elements_on_line) {
@@ -655,14 +667,14 @@ namespace bf::data_inspection {
 				/*Performs static dispatch and calls appropriate function for given combination of type (=byte width) and requested printing format.
 				Calls do_print using appropriate combination of template and non-template parameters.*/
 				template<typename ELEMENT_TYPE>
-				void resolve_data_printer_function(void* address, int count, printing_format format) {
+				void resolve_data_printer_function(void* const address, std::ptrdiff_t const count, printing_format const format) {
 					//constants specifying the expected ideal width of single element's string representation. Based on an educated guess
-					constexpr int hex_width = 2 + sizeof(ELEMENT_TYPE) * 2 + sizeof(ELEMENT_TYPE),
+					constexpr std::size_t hex_width = 2 + sizeof(ELEMENT_TYPE) * 2 + sizeof(ELEMENT_TYPE),
 						oct_width = 1 + sizeof(ELEMENT_TYPE) * 8 / 3 + 1 + sizeof(ELEMENT_TYPE),
 						char_width = sizeof(ELEMENT_TYPE) + 6,
 						dec_width = sizeof(ELEMENT_TYPE) * 3 + sizeof(ELEMENT_TYPE);
 
-					static std::unordered_map<printing_format, void(*)(void*, int)> const print_functions{
+					static std::unordered_map<printing_format, void(*)(void*, std::ptrdiff_t)> const print_functions{
 						{printing_format::hex, do_print_data<std::make_unsigned_t<ELEMENT_TYPE>, std::hex, hex_width>}, //pass std::hex as manipulator
 						{printing_format::oct, do_print_data<std::make_unsigned_t<ELEMENT_TYPE>, std::oct, oct_width>}, //pass std::oct as manipulator
 						{printing_format::sign, do_print_data<std::make_signed_t<ELEMENT_TYPE>, std::dec, dec_width>},  //make sure a signed type is used and pass std::dec as as manipulator
@@ -684,23 +696,23 @@ namespace bf::data_inspection {
 
 
 				/*Printing function for instructions. Prints them one by one until the end of memory or requested count is reached.*/
-				void do_print_instructions(void* const starting_address, int count, printing_format const format) {
+				void do_print_instructions(void* const starting_address, std::ptrdiff_t const count, printing_format const format) {
 					assert(format == printing_format::instruction);
 					assert(count > 0); //sanity checks
-					assert(starting_address < execution::emulator.instructions_end());
-					assert(starting_address >= execution::emulator.instructions_begin());
+					assert(starting_address < execution::emulator.instructions_cend());
+					assert(starting_address >= execution::emulator.instructions_cbegin());
 
 					std::ostringstream stream; //buffer the output to increase printing speed
-					instruction const* current_instruction = static_cast<instruction*>(starting_address),
-						* const instructions_end = execution::emulator.instructions_end();
+					instruction const* current_instruction = static_cast<instruction*>(starting_address);
+					instruction const* const instructions_end = std::min(execution::emulator.instructions_cend(), std::next(current_instruction, count));
 
 					//memory_offset of the first instruction from the beginning of memory
-					std::ptrdiff_t instruction_address = std::distance<instruction const*>(execution::emulator.instructions_begin(), current_instruction);
+					std::ptrdiff_t instruction_address = std::distance(execution::emulator.instructions_cbegin(), current_instruction);
 					//saved position of the program counter to print an arrow indicator at the location of instruction under the pointer
-					instruction const* const under_pc = execution::emulator.instructions_begin() + execution::emulator.program_counter();
+					instruction const* const instruction_under_pc = std::next(execution::emulator.instructions_cbegin(), execution::emulator.program_counter());
 
-					for (; current_instruction != instructions_end && count; ++current_instruction, --count) {
-						stream << std::setw(2) << std::right << (current_instruction == under_pc ? "=>" : "")
+					for (; current_instruction != instructions_end; ++current_instruction) {
+						stream << std::setw(2) << std::right << (current_instruction == instruction_under_pc ? "=>" : "")
 							<< std::setw(6) << instruction_address++ << "   ";
 
 						if (current_instruction->op_code_ == op_code::breakpoint) { //if we encounter a breakpoint, we print the replaced instruction instead
@@ -719,10 +731,11 @@ namespace bf::data_inspection {
 							stream << current_instruction->op_code_ << ' ' << current_instruction->argument_; //normal instructions are simply printed
 						stream << '\n';
 					}
-					if (current_instruction == instructions_end) { //if we end printing due to the lask of additional instructions, notify the user
+					std::ptrdiff_t const instructions_not_printed = std::distance(current_instruction,static_cast<instruction const*>(starting_address) + count);
+					if (instructions_not_printed >= 0) { //If we reached the end of instruction memory, notify the user
 						stream << "End of memory has been reached.\n";
-						if (count)
-							stream << "Skipping " << count << " instruction" << utils::print_plural(count) << " .\n";
+						if (instructions_not_printed)
+							stream << "Skipping " << instructions_not_printed << " instruction" << utils::print_plural(instructions_not_printed) << " .\n";
 					}
 					std::cout << stream.str(); //finally flush it all to the std:cout
 				}
@@ -731,13 +744,13 @@ namespace bf::data_inspection {
 			/*Perform dynamic dispatch and call appropriate callback for given type of data. Does not do much more...*/
 			void perform_print_function_resolution(request_params const& request) {
 				//static const map of function pointers which are used as a callback for given data_type 
-				static std::unordered_map<data_type, void(*)(void*, int, printing_format)> const print_functions{
-					{data_type::byte, &printer_functions::resolve_data_printer_function<uint8_t>},
-					{data_type::word, &printer_functions::resolve_data_printer_function<uint16_t>},
-					{data_type::dword, &printer_functions::resolve_data_printer_function<std::uint32_t>},
-					{data_type::qword, &printer_functions::resolve_data_printer_function<std::uint64_t>},
-					{data_type::character, &printer_functions::resolve_data_printer_function<char>},
-					{data_type::instruction, &printer_functions::do_print_instructions}
+				static std::unordered_map<data_type, void(*)(void* const, std::ptrdiff_t const, printing_format const)> const print_functions{
+					{data_type::byte, printer_functions::resolve_data_printer_function<uint8_t>},
+					{data_type::word, printer_functions::resolve_data_printer_function<uint16_t>},
+					{data_type::dword, printer_functions::resolve_data_printer_function<std::uint32_t>},
+					{data_type::qword, printer_functions::resolve_data_printer_function<std::uint64_t>},
+					{data_type::character, printer_functions::resolve_data_printer_function<char>},
+					{data_type::instruction, printer_functions::do_print_instructions}
 				};
 				assert(print_functions.count(request.type_));
 				//sanity checks of parameters
@@ -759,7 +772,7 @@ namespace bf::data_inspection {
 				print_functions.at(request.type_)(request.address_, request.count_, request.format_);
 			}
 
-		}
+		} //namespace bf::data_inspection::`anonymous`::mem_callback_helper
 
 		/*Callback function for the "mem" cli command. Accepts two arguments, the first one being the inspection request
 		whilst the second one specifying a memory address at which the inspection shall be initiated. These arguments are
@@ -793,14 +806,14 @@ namespace bf::data_inspection {
 
 			static auto constexpr print_pc = [] {
 				std::cout << std::setw(20) << std::left << "Program Counter:";
-				if (int pc = execution::emulator.program_counter(), mem = execution::emulator.instructions_size(); pc == mem)
+				if (std::ptrdiff_t const pc = execution::emulator.program_counter(), mem = execution::emulator.instructions_size(); pc == mem)
 					std::cout << "Out of bounds. Execution finished.\n";
 				else
 					std::cout << pc << ", valid address space at [0, " << mem << ").\n";
 			};
 
 			static auto constexpr print_cpr = [] {
-				std::cout << std::setw(20) << std::left << "Cell Pointer:" << execution::emulator.cell_pointer_register()
+				std::cout << std::setw(20) << std::left << "Cell Pointer:" << execution::emulator.cell_pointer_offset()
 					<< ", valid address space [0, " << execution::emulator.memory_size() << ").\n";
 			};
 
@@ -823,12 +836,12 @@ namespace bf::data_inspection {
 			return 0;
 		}
 
-	}
+	} //namespace bf::data_inspection::`anonymous`
 
 	void initialize() {
-		ASSERT_CALLED_ONLY_ONCE;
+		ASSERT_IS_CALLED_ONLY_ONCE;
 
-		cli::add_command("mem", cli::command_category::debug, "Examines emulator's memory",
+		cli::add_command("mem", cli::command_category::debugging, "Examines emulator's memory",
 			"Usage: \"mem\" request address\n\n"
 
 			"Parameter address denotes the address relative to which the examination shall be performed.\n"
@@ -889,7 +902,7 @@ namespace bf::data_inspection {
 		cli::add_command_alias("x", "mem");
 		cli::add_command_alias("memory", "mem");
 
-		cli::add_command("registers", cli::command_category::debug, "Prints information about CPU's registers.",
+		cli::add_command("registers", cli::command_category::debugging, "Prints information about CPU's registers.",
 			"Usage: \"registers\" [name]\n"
 			"The optional parameter name may be specified to identify either the CPU's program counter or cell pointer\n"
 			"using reserved strings \"pc\" or \"cpr\" respectivelly.\n"
@@ -897,4 +910,5 @@ namespace bf::data_inspection {
 			, &registers_callback);
 		cli::add_command_alias("reg", "registers");
 	}
-}
+
+} //namespace bf::data_inspection

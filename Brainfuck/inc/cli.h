@@ -1,3 +1,5 @@
+#ifndef CLI_H
+#define CLI_H
 #pragma once
 
 #include <string_view>
@@ -19,10 +21,10 @@ namespace bf::cli {
 		compilation, //commands controlling the compilation
 		optimization, //commands instructing the optimization engine to perform program optimizations
 		execution, //commands which control the internal cpu emulator
-		debug, //debugging commands
+		debugging, //debugging commands
 		hooks //hooks of other commands
 	};
-	std::ostream& operator<<(std::ostream& str, command_category const cat); //Output operator
+	std::ostream& operator<<(std::ostream& str, command_category cat); 
 
 	
 
@@ -40,12 +42,16 @@ namespace bf::cli {
 	void add_command_alias(std::string alias, std::string cmd_name);
 
 	/*Searches for cmd_name in list of commands and returns true on sucess.*/
+	[[nodiscard]]
 	bool is_command(std::string const& cmd_name);
-	bool is_command(std::string_view const cmd_name);
+	[[nodiscard]]
+	bool is_command(std::string_view cmd_name);
 
 	/*Searches internal list of aliases for given string and returns true on success.*/
+	[[nodiscard]]
 	bool is_command_alias(std::string const& alias);
-	bool is_command_alias(std::string_view const cmd_name);
+	[[nodiscard]]
+	bool is_command_alias(std::string_view cmd_name);
 
 #if 0
 	/*Adds a new hook for command cmd, which executes specified list of other commands. Called commands
@@ -87,7 +93,10 @@ namespace bf::cli {
 	};
 
 	//prints error message for specified err_code to the standard error stream
-	void print_command_error(command_error const err_code);
+	void print_command_error(command_error err_code);
 	
 
-}
+
+} //namespace bf::cli
+
+#endif
