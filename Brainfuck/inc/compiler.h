@@ -46,6 +46,8 @@ namespace bf {
 	/*Initialization function of cli commands controling compilation. Shall be called only once from main.*/
 	void compiler_initialize();
 
+
+
 } // namespace bf
 
 #endif

@@ -8,9 +8,11 @@
 #include <string_view>
 #include <optional>
 #include <vector>
+#include <algorithm>
+#include <cassert>
 
 //Defines static local boolean and asserts that the code is run just once
-#define ASSERT_IS_CALLED_ONLY_ONCE static bool ___first_time = true; assert(___first_time); ___first_time = false;
+#define ASSERT_IS_CALLED_ONLY_ONCE static bool _____first_time___ = true; assert(_____first_time___); _____first_time___ = false;
 
 
 #define MAKE_STRING_FROM_LINE_DETAIL(x) #x
@@ -69,21 +71,60 @@ namespace bf::utils {
 	In case it is not, prints error message and returns non zero.
 	Returns zero on success, 1 if there are not enough arguments, 2 if there are too many.*/
 	[[nodiscard]]
-	int check_command_argc(std::ptrdiff_t const min, std::ptrdiff_t const max, cli::command_parameters_t const& argv);
+	int check_command_argc(std::ptrdiff_t min, std::ptrdiff_t max, cli::command_parameters_t const& argv);
 
-	/*Parses passed string_view as a signed integer returned in parameter out.
-	Returns value initialized std::errc iff the parsing end successfully and the parsed number is not negative.
-	Otherwise returns std::errc::invalid_argument and the value of out is unchanged.*/
+	/*Attempts to parse passed string_view as a non-negativesigned integer. Returns empty optional on fail.*/
 	[[nodiscard]]
 	std::optional<int> parse_nonnegative_argument(std::string_view view);
 
-	/*Parses passed string_view as a signed integer returned in parameter out.
-	Returns value initialized std::errc iff the parsing end successfully and the parsed number is positive.
-	Otherwise returns std::errc::invalid_argument and the value of out is unchanged.*/
 
+	/*Attempts to parse passed string_view as a positive signed integer. Returns empty optional on fail.*/
 	[[nodiscard]]
 	std::optional<int> parse_positive_argument(std::string_view view);
 
+	/*Attempts to parse passed string_view as signed integer. Returns empty optional on fail.*/
+	[[nodiscard]]
+	std::optional<int> parse_int_argument(std::string_view view);
+
+	template<typename Iter, typename Pred>
+	struct ranges_iterator {
+	private:
+
+		Iter begin_, end_;
+		Pred pred_;
+
+		struct sentinel_t {};
+
+	public:
+
+		ranges_iterator(Iter const begin, Iter const end, Pred pred)
+			: begin_{}, end_{ end }, pred_{ pred } {
+			begin_ = std::find_if(begin, end, pred);
+		}
+
+		std::pair<Iter, Iter> operator*() {
+			assert(pred_(*begin_));
+
+			std::pair<Iter, Iter> result{ begin_, std::find_if_not(begin_, end_, pred_) };
+
+			begin_ = std::find_if(result.second, end_, pred_);
+			return result;
+		}
+
+		void operator++() {}
+
+		bool operator!=(sentinel_t) const {
+			return begin_ != end_;
+		}
+
+		ranges_iterator& begin() { return *this; }
+		sentinel_t end() { return {}; };
+	};
+
+	template<typename Iter, typename Pred>
+	ranges_iterator<Iter, Pred> iterate_ranges_if(Iter begin, Iter end, Pred pred) {
+		return { begin, end, pred };
+	}
 
 } //namespace bf::utils 
 

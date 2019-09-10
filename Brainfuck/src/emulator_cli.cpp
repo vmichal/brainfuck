@@ -200,9 +200,9 @@ namespace bf::execution {
 			};
 
 			std::optional<data_stream_direction> parse_stream_direction(std::string_view const stream) {
-				if (stream.compare("out") == 0)
+				if (stream == "out")
 					return data_stream_direction::out;
-				if (stream.compare("in") == 0)
+				if (stream == "in")
 					return data_stream_direction::in;
 				cli::print_command_error(cli::command_error::argument_not_recognized);
 				return std::nullopt;
@@ -212,7 +212,7 @@ namespace bf::execution {
 				if (stream_direction == data_stream_direction::out)
 					emulator.emulated_program_stdout()->flush(); //if we are abour to replace the output stream, we need to flush the old one
 
-				if (new_stream_name.compare("std") == 0) //the new stream is one of standard ones
+				if (new_stream_name == "std") //the new stream is one of standard ones
 					switch (stream_direction) {
 						case data_stream_direction::in:
 							emulator.emulated_program_stdin() = &std::cin;

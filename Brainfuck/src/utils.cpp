@@ -34,7 +34,7 @@ namespace bf::utils {
 		After the passed string has been matched against this regex, we will end up with a range of simple tokens and those more complex tokens
 		preceded by quotes and possibly ending with quotes as well. We are obliged to to get rid of these before returning.
 		*/
-		static std::regex const token_regex{ R"(\s*(([^"]\S*?)|(".*?("|$)))(\s*|$))", std::regex_constants::optimize | std::regex_constants::ECMAScript };
+		static std::regex const token_regex{ R"(\s*(([^"]\S*?)|(".*?("|$)))(\s+|$))", std::regex_constants::optimize | std::regex_constants::ECMAScript };
 		using token_iterator = std::regex_token_iterator<std::string_view::const_iterator>; //I use this convenience using declaration to simplify the call to std::transform
 
 		std::vector<std::string_view> tokens;
@@ -43,8 +43,9 @@ namespace bf::utils {
 		//transform range represented by regex_token_iterators using lambda. The iterator traverses the string trying to match it against token_regex 
 		std::transform(begin, token_iterator{}, std::back_inserter(tokens),  //results of transformations are being push_backed into the vector during the transformation
 			[](std::sub_match<std::string_view::const_iterator> const& match) -> std::string_view { //take each sub_match and transform it into a string_view
-				return std::string_view{ &match.first[0], static_cast<std::size_t>(std::distance(match.first, match.second)) };
+				return std::string_view{ &*match.first, static_cast<std::size_t>(std::distance(match.first, match.second)) };
 			});
+
 		for (auto& token : tokens)
 			if (token.front() == '\"') {   //if this submatch starts with quotes, we need to get rid of them by advancing the iterator one char forward
 				token.remove_prefix(1);
@@ -92,7 +93,7 @@ namespace bf::utils {
 		std::filesystem::path name{ file_name };
 		if (std::filesystem::exists(name) && !std::filesystem::is_directory(name)) {
 			//allocate a buffer long enough for the content of file
-			std::string file_content(static_cast<std::string::size_type>(std::filesystem::file_size(name)), '\0');
+			std::string file_content(static_cast<std::size_t>(std::filesystem::file_size(name)), '\0');
 			std::ifstream{ name }.read(file_content.data(), file_content.size()); //read directly into buffer
 			file_content.resize(std::strlen(file_content.c_str()));
 			return file_content;
@@ -103,7 +104,7 @@ namespace bf::utils {
 	bool prompt_user_yesno() {
 		std::cout << "Please, choose either yes or no. [Y/N].\t";
 		char input_char;
-		do 
+		do
 			input_char = std::toupper(static_cast<char>(std::cin.get()), std::locale{});
 		while (input_char != 'Y' && input_char != 'N'); //prompt until the user types something meaningful
 		std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); //flush EOL from stdin
@@ -111,14 +112,9 @@ namespace bf::utils {
 		return input_char == 'Y';
 	}
 
-
 	std::optional<int> parse_nonnegative_argument(std::string_view const view) {
 		int result;
-		if (std::from_chars(view.data(), view.data() + view.size(), result).ec != std::errc{}) {
-			cli::print_command_error(cli::command_error::invalid_number_format);
-			return std::nullopt;
-		}
-		if (result < 0) {
+		if (std::from_chars(view.data(), view.data() + view.size(), result).ec != std::errc{} || result < 0) {
 			cli::print_command_error(cli::command_error::non_negative_number_expected);
 			return std::nullopt;
 		}
@@ -126,10 +122,21 @@ namespace bf::utils {
 	}
 
 	std::optional<int> parse_positive_argument(std::string_view const view) {
-		if (std::optional<int> const result = parse_nonnegative_argument(view); !result.has_value() || result.value() == 0)
+		int result;
+		if (std::from_chars(view.data(), view.data() + view.size(), result).ec != std::errc{} || result <= 0) {
+			cli::print_command_error(cli::command_error::positive_number_expected);
 			return std::nullopt;
-		else
-			return result;
+		}
+		return result;
 	}
 
-} //namespace bf::utils
+	std::optional<int> parse_int_argument(std::string_view const view) {
+		int result;
+		if (std::from_chars(view.data(), view.data() + view.size(), result).ec != std::errc{}) {
+			cli::print_command_error(cli::command_error::invalid_number_format);
+			return std::nullopt;
+		}
+		return result;
+	}
+
+} //namespace bf::utils 

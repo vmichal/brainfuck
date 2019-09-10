@@ -19,7 +19,7 @@ namespace bf {
 		compiler_initialize();
 		breakpoints::initialize();
 		data_inspection::initialize();
-		optimizations::initialize();
+		opt::initialize();
 	}
 } //namespace bf
 

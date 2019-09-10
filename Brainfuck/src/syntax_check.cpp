@@ -8,7 +8,7 @@
 namespace bf {
 
 
-	bool operator<(syntax_error const& lhs, syntax_error const& rhs) {
+	bool operator<(syntax_error const& lhs, syntax_error const& rhs) noexcept {
 		return lhs.line_ != rhs.line_ ? lhs.line_ < rhs.line_ : lhs.char_offset_ < rhs.char_offset_;
 	}
 
@@ -54,7 +54,7 @@ namespace bf {
 		}
 
 		syntax_errors.reserve(syntax_errors.size() + opened_loops.size()); //source code traversal finished => we now know how many syntax errors there are
-		auto const first_sequence_end = syntax_errors.end(); //middle iterator for inplace merging (end of the first sorted range)
+		auto const first_sequence_end = std::next(syntax_errors.begin(), syntax_errors.size()); //middle iterator for inplace merging (end of the first sorted range)
 		//TODO this ^^^^^^^^^^^^^^^^^^^^^^^^^ may be runtime error on debug confguration (MSVC)
 
 		for (auto const [line, column] : opened_loops) //traverse the stack of opened loops FROM THE BEGINNING and generate error messages

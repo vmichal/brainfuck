@@ -2,11 +2,14 @@
 #define PROGRAM_CODE_H
 #pragma once
 #include "syntax_check.h"
+#include "utils.h"
 
 #include <string_view>
 #include <vector>
+#include <cassert>
 #include <optional>
 #include <string>
+#include <set>
 #include <memory>
 #include <ostream>
 
@@ -15,17 +18,10 @@ namespace bf {
 	/*Enumeration of recognized operation codes. Fixed to width of 32bits, */
 	enum class op_code : std::uint32_t {
 
-		//sentinel value for an invalid operation code
-		invalid = ~static_cast<std::underlying_type_t<op_code>>(0),
-
 		//no operation to be carried out - only skips a CPU cycle
 		nop = 117,
 		//increase cell's value (may overflow by the laws of standard modulo 2^n unsigned arithmetic)
 		inc,
-		//decrease cell's value (mya underflow by the laws of standard modulo 2^n unsigned arithmetic)
-		dec,
-		//shift the cell pointer towards lower address (jumps from the beginning of the address space to the end)
-		left,
 		//shift the cell pointer towards higher address (jumps from the end of the address space to the beginning)
 		right,
 
@@ -43,6 +39,9 @@ namespace bf {
 
 		//set pointed to cell to the value of immediate
 		load_const,
+
+		//infinite loop like []
+		infinite,
 
 		//immediatelly stop the execution cycle of the CPU. 
 		breakpoint,
@@ -77,86 +76,166 @@ namespace bf {
 		};
 		std::size_t source_offset_; //number of characters preceding the corresponding brainfuck instruction in the source code
 
+
+		[[nodiscard]]
+		std::ptrdiff_t argument() const { return argument_; }
+		[[nodiscard]]
+		std::ptrdiff_t destination() const { return destination_; }
+		[[nodiscard]]
+		std::size_t source_offset() const { return source_offset_; }
 		/*Returns true iff it is legal to collapse a block of multiple consecutive occurences of this instruction. If a fold of two or more
 		instructions would result in an invalid program, false is returned. Foldabe instructions are inc, dec, right and left. */
 		[[nodiscard]]
-		constexpr bool is_foldable() const {
-
-			switch (op_code_) {
-			case op_code::inc: case op_code::dec:
-			case op_code::left:	case op_code::right:
-				return true;
-			default:
-				return false;
-			};
-		}
+		constexpr bool is_arithmetic() const { return op_code_ == op_code::inc; }
+		[[nodiscard]]
+		constexpr bool is_shift() const { return op_code_ == op_code::right; }
 		//Returns true iff the instruction denotes an (un)conditional jump.
 		[[nodiscard]]
 		constexpr bool is_jump() const { return op_code_ == op_code::jump || op_code_ == op_code::jump_not_zero; }
+
 		//Returns true iff the instruction denotes an input/output operation (reads or writes).
 		[[nodiscard]]
 		constexpr bool is_io() const { return op_code_ == op_code::read || op_code_ == op_code::write; }
 
-
-		instruction() : instruction(op_code::invalid, -1, std::numeric_limits<std::size_t>::max()) {}
-
-		instruction(op_code const op_code, std::ptrdiff_t const argument, std::size_t const source_offset)
-			: op_code_{ op_code }, argument_{ argument }, source_offset_{ source_offset } {}
-
-		~instruction() noexcept = default;
-		instruction(instruction const& copy) noexcept = default;
-		instruction(instruction&& move) noexcept = default;
-		instruction& operator=(instruction const& copy) noexcept = default;
-		instruction& operator=(instruction&& move) noexcept = default;
-
-
-		//Returns the mnemonic of this instruction.
 		[[nodiscard]]
-		std::string const& mnemonic() const { return get_mnemonic(op_code_); }
+		constexpr bool is_const() const { return op_code_ == op_code::load_const; }
+
+		[[nodiscard]]
+		constexpr bool is_nop() const {
+			return op_code_ == op_code::nop && argument_ == -1;
+		}
+
+		constexpr void make_nop() {
+			op_code_ = op_code::nop;
+			argument_ = -1;
+		}
+
+		[[nodiscard]]
+		constexpr bool is_infinite() const { return op_code_ == op_code::infinite; }
+		[[nodiscard]]
+		constexpr bool is_infinite_on_zero() const { return is_infinite() && argument_ == 0; }
+		constexpr bool is_infinite_on_non_zero() const { return is_infinite() && argument_ != 0; }
+
+		constexpr void make_infinite_on_zero() { op_code_ = op_code::infinite; argument_ = 0; }
+		constexpr void make_infinite_on_not_zero() { op_code_ = op_code::infinite; argument_ = 1; }
+
 	};
 
 	struct basic_block {
+
 		std::ptrdiff_t label_;
 
 		std::vector<instruction> ops_;
 
-		std::vector<basic_block*> predecessors_;
+		std::set<basic_block*> predecessors_;
 
-		basic_block* natural_successor_;
+		basic_block* natural_successor_ = nullptr;
 
-		basic_block* jump_successor_;
+		basic_block* jump_successor_ = nullptr;
 
-		template<typename A, typename B>
-		basic_block(std::ptrdiff_t const label, A&& ops, B&& pred, basic_block* const natural_succ, basic_block* const jump_succ)
-			: label_{ label }, ops_{ std::forward<A&&>(ops) }, predecessors_{ std::forward<B&&>(pred) },
-			natural_successor_{ natural_succ }, jump_successor_{ jump_succ }
+		//TODO add analysis flags
+
+		basic_block(std::ptrdiff_t const label, std::vector<instruction> ops)
+			: label_{ label }, ops_{ std::move(ops) }
 		{}
+
+		basic_block(basic_block const&) = delete;
+		basic_block(basic_block&&) = delete;
+		basic_block& operator=(basic_block const&) = delete;
+		basic_block& operator=(basic_block&&) = delete;
+
+		static constexpr basic_block* basic_block::* successor_ptrs[] = { &basic_block::natural_successor_, &basic_block::jump_successor_ };
+
+		[[nodiscard]]
+		bool is_orphaned() const {
+			return natural_successor_ == nullptr && jump_successor_ == nullptr
+				&& predecessors_.empty() && ops_.empty();
+		}
+
+		void orphan() {
+			if (jump_successor_) {//unbind the block from its successors
+				jump_successor_->remove_predecessor(this);
+				jump_successor_ = nullptr;
+			}
+
+			if (natural_successor_) {
+				natural_successor_->remove_predecessor(this);
+				natural_successor_ = nullptr;
+			}
+
+			for (basic_block* const predecessor : predecessors_) {
+				if (predecessor->jump_successor_ == this)
+					predecessor->jump_successor_ = nullptr;
+				else if (predecessor->natural_successor_ == this)
+					predecessor->natural_successor_ = nullptr;
+			}
+			predecessors_.clear();
+			ops_.clear();
+		}
+
+		[[nodiscard]]
+		bool empty() const { return ops_.empty(); }
+
+		[[nodiscard]]
+		bool is_pure_cjump() const { return ops_.size() == 1u && ops_.front().op_code_ == op_code::jump_not_zero; }
+		[[nodiscard]]
+		bool is_pure_ujump() const { return ops_.size() == 1u && ops_.front().op_code_ == op_code::jump; }
+
+		[[nodiscard]]
+		bool is_jump() const { return is_ujump() || is_cjump(); }
+
+		[[nodiscard]]
+		bool is_cjump() const { return !empty() && ops_.back().op_code_ == op_code::jump_not_zero; }
+		[[nodiscard]]
+		bool is_ujump() const { return !empty() && ops_.back().op_code_ == op_code::jump; }
+
+		[[nodiscard]]
+		bool has_self_loop() const { return has_predecessor(this); }
+
+		void remove_predecessor(basic_block* const block) {
+			assert(has_predecessor(block));
+			predecessors_.erase(block);
+		}
+
+		void add_predecessor(basic_block* const block) {
+			assert(!has_predecessor(block));
+			predecessors_.insert(block);
+		}
+
+		[[nodiscard]]
+		basic_block* get_unique_predecessor() const { return predecessors_.size() == 1 ? *predecessors_.begin() : nullptr; }
+
+		[[nodiscard]]
+		bool has_successor(basic_block const* const successor) const {
+			return  natural_successor_ == successor || jump_successor_ == successor;
+		}
+
+		[[nodiscard]]
+		bool has_predecessor(basic_block const* const pred) const {
+			return predecessors_.count(const_cast<basic_block*>(pred));
+		}
+
+		[[nodiscard]]
+		basic_block* basic_block::* choose_successor_ptr(basic_block const* successor) {
+			assert(has_successor(successor));
+			return natural_successor_ == successor ? &basic_block::natural_successor_ : &basic_block::jump_successor_;
+		}
+
+		[[nodiscard]]
+		basic_block* basic_block::* choose_other_successor(basic_block const* successor) {
+			assert(has_successor(successor));
+			return natural_successor_ != successor ? &basic_block::natural_successor_ : &basic_block::jump_successor_;
+		}
+
+		struct ptr_comparator {
+			bool operator()(basic_block const* const a, basic_block const* const b) {
+				return a->label_ < b->label_;
+			}
+		};
 
 
 	};
-}
 
-#include <sstream>
-#include <iomanip>
-#include <iostream>
-namespace bf {
-
-
-	inline void print_basic_blocks(std::vector<std::unique_ptr<basic_block>> const& basic_blocks) {
-		std::ostringstream buffer;
-
-		buffer << "\n\n\n\n\n";
-
-		for (auto const& block_ptr : basic_blocks) {
-			buffer << "Basic block id " << block_ptr->label_ << ", instruction count: " << block_ptr->ops_.size() << '\n';
-			int offset = 0;
-			for (instruction const& i : block_ptr->ops_)
-				buffer << "\t\t" << std::setw(4) << ++offset << ": " << i.op_code_ << ' '
-				<< (i.is_jump() ? (block_ptr->jump_successor_->label_) : i.argument_) << "\n";
-			buffer << "\n\n";
-		}
-		std::cout << buffer.str();
-	}
 
 }
 

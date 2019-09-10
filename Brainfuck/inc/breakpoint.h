@@ -59,8 +59,8 @@ namespace bf::breakpoints {
 		breakpoint(breakpoint const& copy) = delete;
 		breakpoint& operator=(breakpoint const& copy) = delete;
 
-		breakpoint(breakpoint&& other) = default;
-		breakpoint& operator=(breakpoint&& other) = default;
+		breakpoint(breakpoint&& other) noexcept = default;
+		breakpoint& operator=(breakpoint&& other) noexcept = default;
 	};
 
 

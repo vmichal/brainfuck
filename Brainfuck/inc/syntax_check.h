@@ -16,9 +16,9 @@ namespace bf {
 		//Index within this line at which the error happened; numbered from one
 		std::ptrdiff_t char_offset_;
 
-		template<typename T>
-		syntax_error(T&& msg, std::ptrdiff_t const line, std::ptrdiff_t const offset) noexcept
-			: message_{ std::forward<T&&>(msg) }, line_{ line }, char_offset_{ offset }
+		template<typename TAG>
+		syntax_error(TAG&& msg, std::ptrdiff_t const line, std::ptrdiff_t const offset)
+			: message_{ std::forward<TAG>(msg) }, line_{ line }, char_offset_{ offset }
 		{}
 
 
@@ -27,7 +27,7 @@ namespace bf {
 	/*Relational operator for syntax errors. If the lines are same, the smaller syntax error is identified by lower char_offset.
 	Otherwise orderes errors by line numbers. */
 	[[nodiscard]]
-	bool operator<(syntax_error const& lhs, syntax_error const& rhs);
+	bool operator<(syntax_error const& lhs, syntax_error const& rhs) noexcept;
 
 	/*Traverses passed source code and searches for syntactic errors (mismatching brackets).
 	Returns true if the source_code is ok, false otherwise.

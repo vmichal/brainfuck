@@ -20,6 +20,11 @@ namespace bf::data_inspection {
 		/*Namespace wrapping helper functions for mem_callback. Shall not pollute global namespace.*/
 		namespace mem_callback_helper {
 
+			template<typename A, typename B>
+			constexpr std::ptrdiff_t distance_in_bytes(A const* a, B const* b) {
+				return std::distance(reinterpret_cast<char const*>(a), reinterpret_cast<char const*>(b));
+			}
+
 			/*Enumeration of different ways of inspecting data. Most importantly specifies the size of units by which data is inspected.*/
 			enum class data_type {
 				none,
@@ -64,8 +69,8 @@ namespace bf::data_inspection {
 				none,
 				hex,
 				oct,
-				sign,
-				unsign,
+				dec_signed,
+				dec_unsigned,
 				character,
 				instruction
 			};
@@ -207,8 +212,8 @@ namespace bf::data_inspection {
 					inline static std::unordered_map<char, printing_format> const formats_map{
 						{'x', printing_format::hex},
 						{'o', printing_format::oct},
-						{'u', printing_format::unsign},
-						{'s', printing_format::sign},
+						{'u', printing_format::dec_unsigned},
+						{'s', printing_format::dec_signed},
 					};
 				};
 
@@ -270,11 +275,11 @@ namespace bf::data_inspection {
 						}
 
 						switch (expected_address_space_) {
-						case address_space::code: //TODO replace std::string_view::compare with !=
-							error_ = current_token_->compare("$pc");
+						case address_space::code:
+							error_ = *current_token_ != "$pc";
 							break;
 						case address_space::data:
-							error_ = current_token_->compare("$cpr");
+							error_ = *current_token_ != "$cpr";
 							break;
 							ASSERT_NO_OTHER_OPTION;
 						}
@@ -386,9 +391,9 @@ namespace bf::data_inspection {
 							return *value;
 						}
 						else if (token.front() == '$') { //a variable encountered
-							if (token.compare("$pc") == 0) //program counter
+							if (token == "$pc") //program counter
 								return execution::emulator.program_counter();
-							else if (token.compare("$cpr") == 0) //cell pointer register
+							else if (token == "$cpr") //cell pointer register
 								return execution::emulator.cell_pointer_offset();
 							else
 								MUST_NOT_BE_REACHED; //validating function should have cought all errors and typos
@@ -560,7 +565,8 @@ namespace bf::data_inspection {
 					assert(address >= execution::emulator.memory_begin() && address < execution::emulator.memory_end());
 
 					//We have to perform nested typecasts to prevent compile errors if emulator's memory's underlying cell type changed
-					std::ptrdiff_t const bytes_to_end = std::distance(static_cast<char const*>(address), static_cast<char const*>(execution::emulator.memory_end()));
+					//std::ptrdiff_t const bytes_to_end = std::distance(static_cast<char const*>(address), static_cast<char const*>(execution::emulator.memory_end()));
+					std::ptrdiff_t const bytes_to_end = distance_in_bytes(address, execution::emulator.memory_end());
 
 
 					//Actual number of elements is the lower from maximal possible number and requested count
@@ -577,24 +583,81 @@ namespace bf::data_inspection {
 				/*Helper function for do_print. If the given character is printable, it is returned as it is. If it denotes an escape
 				sequence, a short string represenation is printed. Otherwise hex value is printed.*/
 				std::string get_readable_char_representation(char const c) {
-					static  std::unordered_map<char, std::string> const escape_seqs{
-						{'\0', "NUL"},
-						{'\n', "LF"},
-						{'\t', "HT"},
-						{'\v', "VT"},
-						{'\a', "BEL"},
-						{'\b', "BS"},
-						{'\r', "CR"}
+					using namespace std::string_literals;
+					static std::unordered_map<char, std::string> const escape_sequences{
+						{'\0', "NUL"s},
+						{'\n', "LF"s},
+						{'\t', "HT"s},
+						{'\v', "VT"s},
+						{'\a', "BEL"s},
+						{'\b', "BS"s},
+						{'\r', "CR"s}
 					};
-					if (std::isprint(c, std::locale{})) //alphanumericchars and punctuation is can be printed
+					if (std::isprint(c, std::locale{})) //alphanumeric chars and punctuation can be printed
 						return { c };
-					if (escape_seqs.count(c)) //escape sequences
-						return escape_seqs.at(c);
+					if (escape_sequences.count(c)) //escape sequences
+						return escape_sequences.at(c);
 
-					std::array<char, 8> buffer = { "0x" }; 
+					std::array<char, 8> buffer = { "0x" };
 					std::to_chars(buffer.data() + 2, buffer.data() + buffer.size(), static_cast<unsigned int>(c), 16);
 					return buffer.data(); //hex value for others
 				}
+
+				//Constants specifying the expected ideal maximum width of single element's string representation. Based on an educated guess
+				template<typename ELEMENT_TYPE>
+				struct widths {
+					static constexpr std::size_t bit_count = sizeof(ELEMENT_TYPE) * CHAR_BIT;
+					static constexpr std::size_t padding = sizeof(ELEMENT_TYPE);
+
+					//Two chars for leading "0x" + two chars per byte + padding
+					static constexpr std::size_t hex = 2 + bit_count / 4 + padding;
+					//One char for leading zero + one char per three bits rounded towards positive infinity + padding
+					static constexpr std::size_t oct = 1 + bit_count / 3 + 1 + padding;
+					//Worst case scenarion for an unprintable char: "0x" + two hex digits + plus two additional spaces of padding
+					static constexpr std::size_t character = 4 + 2 + padding;
+					//One digit from the beginning + three chars per ten bits + padding
+					static constexpr std::size_t dec = 1 + bit_count * 3 / 10 + padding;
+				};
+
+				template<typename T, printing_format format>
+				struct do_print_data_traits : std::false_type {};
+
+				template<>
+				struct do_print_data_traits<char, printing_format::character> : std::true_type {
+					using ELEMENT_TYPE = char;
+					static constexpr std::ios_base& (&RADIX_MANIPULATOR)(std::ios_base&) = std::dec;
+					static constexpr int NUMBER_WIDTH = widths<ELEMENT_TYPE>::character;
+				};
+				template<typename T>
+				struct do_print_data_traits<T, printing_format::hex> : std::true_type {
+					static_assert(std::is_integral_v<T>);
+					using ELEMENT_TYPE = std::make_unsigned_t<T>;
+					static constexpr std::ios_base& (&RADIX_MANIPULATOR)(std::ios_base&) = std::hex;
+					static constexpr int NUMBER_WIDTH = widths<ELEMENT_TYPE>::hex;
+				};
+				template<typename T>
+				struct do_print_data_traits<T, printing_format::oct> : std::true_type {
+					static_assert(std::is_integral_v<T>);
+					using ELEMENT_TYPE = std::make_unsigned_t<T>;
+					static constexpr std::ios_base& (&RADIX_MANIPULATOR)(std::ios_base&) = std::oct;
+					static constexpr int NUMBER_WIDTH = widths<ELEMENT_TYPE>::oct;
+				};
+				template<typename T>
+				struct do_print_data_traits<T, printing_format::dec_signed> : std::true_type {
+					static_assert(std::is_integral_v<T>);
+					using ELEMENT_TYPE = std::make_signed_t<T>;
+					static constexpr std::ios_base& (&RADIX_MANIPULATOR)(std::ios_base&) = std::dec;
+					static constexpr int NUMBER_WIDTH = widths<ELEMENT_TYPE>::dec;
+				};
+				template<typename T>
+				struct do_print_data_traits<T, printing_format::dec_unsigned> : std::true_type {
+					static_assert(std::is_integral_v<T>);
+					using ELEMENT_TYPE = std::make_unsigned_t<T>;
+					static constexpr std::ios_base& (&RADIX_MANIPULATOR)(std::ios_base&) = std::dec;
+					static constexpr int NUMBER_WIDTH = widths<ELEMENT_TYPE>::dec;
+				};
+
+				//TODO add binary printing
 
 				/*I've been writing this function for half an hour and am fed up with it, so comment has to wait for now.
 				This function does the heavy lifting of printing to stdout and is a victim of severe optimizations of mine.
@@ -613,53 +676,59 @@ namespace bf::data_inspection {
 				Then a buffer is constructed and the first line containing the address offsets is printed. After that lines are
 				printed one by one advancing the pointer until it traverses the entire sequence. The function then returns.
 				*/
-				template<typename ELEMENT_TYPE, std::ios_base& (*RADIX_MANIPULATOR)(std::ios_base&), int NUMBER_WIDTH>
+				template<typename T, printing_format FORMAT>
 				void do_print_data(void* const address, std::ptrdiff_t const count) {
+					assert(count > 0); //sanity check
+					assert(execution::emulator.memory_begin() <= address && address < execution::emulator.memory_end());
+
+					using traits = do_print_data_traits<T, FORMAT>;
+					static_assert(traits::value, "Invalid arguments specified to the function!");
+
 					//Get boundaries between which it is safe to read values from memory
-					inspected_memory_region<ELEMENT_TYPE> valid_memory = get_inspected_memory_region<ELEMENT_TYPE>(address, count);
-					if (count == valid_memory.unreachable_count_) {  //we are too close to boundary, must return
+					inspected_memory_region<typename traits::ELEMENT_TYPE> inspected_memory = get_inspected_memory_region<typename traits::ELEMENT_TYPE>(address, count);
+					if (count == inspected_memory.unreachable_count_)   //we are too close to boundary, must return
 						return;
-					}
-					constexpr std::ptrdiff_t elements_on_line = 16 / sizeof(ELEMENT_TYPE); //number of consecutive elements which will reside on single line
+					constexpr std::size_t bytes_per_line = 16;
+					constexpr std::ptrdiff_t elements_on_line = bytes_per_line / sizeof(typename traits::ELEMENT_TYPE); //number of consecutive elements which will reside on single line
 
 					std::ostringstream stream; //Output buffer enormously increasing the speed of printing
-					stream << std::uppercase << std::right << std::setw(12) << "address" << std::hex; //set alignment to left and enable printing of radix-prefix
+					stream << std::uppercase << std::right << std::setw(12) << "address/offset" << std::hex; //set alignment to left and enable printing of radix-prefix
 					for (int i = 0; i < elements_on_line; ++i) //print column descriptions (=offsets from the address printed at the beginning of line)
-						stream << std::setw(NUMBER_WIDTH) << i * sizeof(ELEMENT_TYPE);
+						stream << std::setw(traits::NUMBER_WIDTH) << i * sizeof(typename traits::ELEMENT_TYPE);
 					stream << std::setfill('0') << std::showbase << "\n\n";
 
-					std::ptrdiff_t memory_offset = std::distance(static_cast<char const*>(execution::emulator.memory_begin()), static_cast<char const*>(static_cast<void const*>(valid_memory.begin_)));
+					std::ptrdiff_t memory_offset = distance_in_bytes(execution::emulator.memory_begin(), inspected_memory.begin_);
 
 					//While there are more elements than can fit on a single line, print them by lines
-					while (std::distance(valid_memory.begin_, valid_memory.end_) >= elements_on_line) {
+					while (distance_in_bytes(inspected_memory.begin_, inspected_memory.end_) >= elements_on_line) {
 						//first print the pointer value and follow it with the given manipulator 
-						stream << std::setw(12) << std::setfill(' ') << std::hex << memory_offset << RADIX_MANIPULATOR;
-						memory_offset += 16;
+						stream << std::setw(12) << std::setfill(' ') << std::hex << memory_offset << traits::RADIX_MANIPULATOR;
+						memory_offset += bytes_per_line;
 
-						for (int i = 0; i < elements_on_line; ++i, ++valid_memory.begin_) {//print values
-							stream << std::setw(NUMBER_WIDTH); //reserves enough space in output stream
-							if constexpr (std::is_same_v<std::remove_cv_t<ELEMENT_TYPE>, char>)
-								stream << get_readable_char_representation(*valid_memory.begin_); //print as character
+						for (int i = 0; i < elements_on_line; ++i, ++inspected_memory.begin_) {//print values
+							stream << std::setw(traits::NUMBER_WIDTH); //reserves enough space in output stream
+							if constexpr (std::is_same_v<std::remove_cv_t<typename traits::ELEMENT_TYPE>, char>)
+								stream << get_readable_char_representation(*inspected_memory.begin_); //print as character
 							else
-								stream << +*valid_memory.begin_; //print as a number
+								stream << +*inspected_memory.begin_; //print as a number
 						}
 						stream << '\n';
 					}
-					if (valid_memory.begin_ != valid_memory.end_) { //if there is a part of line remaining
-						stream << std::setw(12) << std::setfill(' ') << std::hex << memory_offset << RADIX_MANIPULATOR;
-						for (; valid_memory.begin_ != valid_memory.end_; ++valid_memory.begin_) {//print the address followed by consecutive values again
-							stream << std::setw(NUMBER_WIDTH); //reserve space once more
-							if constexpr (std::is_same_v<std::remove_cv_t<ELEMENT_TYPE>, char>)
-								stream << get_readable_char_representation(*valid_memory.begin_); //print as char 
+					if (inspected_memory.begin_ != inspected_memory.end_) { //if there is a part of line remaining
+						stream << std::setw(12) << std::setfill(' ') << std::hex << memory_offset << traits::RADIX_MANIPULATOR;
+						for (; inspected_memory.begin_ != inspected_memory.end_; ++inspected_memory.begin_) {//print the address followed by consecutive values again
+							stream << std::setw(traits::NUMBER_WIDTH); //reserve space once more
+							if constexpr (std::is_same_v<std::remove_cv_t<typename traits::ELEMENT_TYPE>, char>)
+								stream << get_readable_char_representation(*inspected_memory.begin_); //print as char 
 							else
-								stream << +*valid_memory.begin_; //print as number
+								stream << +*inspected_memory.begin_; //print as number
 						}
 						stream << '\n';
 					}
-					if (valid_memory.unreachable_count_) //requested memory would exceed cpu's internal memory
-						stream << "Another " << std::dec << valid_memory.unreachable_count_ << " element" << utils::print_plural(valid_memory.unreachable_count_, " has", "s have")
-						<< " been requested, but " << utils::print_plural(valid_memory.unreachable_count_, "was", "were") << " out of bounds of cpu's memory.\n";
-					if (std::ptrdiff_t const misalign = std::distance(static_cast<char const*>(static_cast<void const*>(valid_memory.begin_)), static_cast<char const*>(execution::emulator.memory_end())))
+					if (inspected_memory.unreachable_count_) //requested memory would exceed cpu's internal memory
+						stream << "Another " << std::dec << inspected_memory.unreachable_count_ << " element" << utils::print_plural(inspected_memory.unreachable_count_, " has", "s have")
+						<< " been requested, but " << utils::print_plural(inspected_memory.unreachable_count_, "was", "were") << " out of bounds of cpu's memory.\n";
+					if (std::ptrdiff_t const misalign = distance_in_bytes(inspected_memory.begin_, execution::emulator.memory_end()))
 						stream << "There have also been " << misalign << " misaligned memory locations between last printed address and memory's boundary.\n";
 					std::cout << stream.str(); //print buffer's content to stdout
 				}
@@ -667,31 +736,23 @@ namespace bf::data_inspection {
 				/*Performs static dispatch and calls appropriate function for given combination of type (=byte width) and requested printing format.
 				Calls do_print using appropriate combination of template and non-template parameters.*/
 				template<typename ELEMENT_TYPE>
-				void resolve_data_printer_function(void* const address, std::ptrdiff_t const count, printing_format const format) {
-					//constants specifying the expected ideal width of single element's string representation. Based on an educated guess
-					constexpr std::size_t hex_width = 2 + sizeof(ELEMENT_TYPE) * 2 + sizeof(ELEMENT_TYPE),
-						oct_width = 1 + sizeof(ELEMENT_TYPE) * 8 / 3 + 1 + sizeof(ELEMENT_TYPE),
-						char_width = sizeof(ELEMENT_TYPE) + 6,
-						dec_width = sizeof(ELEMENT_TYPE) * 3 + sizeof(ELEMENT_TYPE);
-
-					static std::unordered_map<printing_format, void(*)(void*, std::ptrdiff_t)> const print_functions{
-						{printing_format::hex, do_print_data<std::make_unsigned_t<ELEMENT_TYPE>, std::hex, hex_width>}, //pass std::hex as manipulator
-						{printing_format::oct, do_print_data<std::make_unsigned_t<ELEMENT_TYPE>, std::oct, oct_width>}, //pass std::oct as manipulator
-						{printing_format::sign, do_print_data<std::make_signed_t<ELEMENT_TYPE>, std::dec, dec_width>},  //make sure a signed type is used and pass std::dec as as manipulator
-						{printing_format::unsign, do_print_data<std::make_unsigned_t<ELEMENT_TYPE>, std::dec, dec_width>} //pass std::dec and assure data is read using an unsigned type
-					};
-					assert(count > 0); //sanity check
-					assert(format != printing_format::instruction);
-					assert(execution::emulator.memory_begin() <= address && address < execution::emulator.memory_end());
-
-					//compile time branch to make dispatch faster if cv char is specified 
-					if constexpr (std::is_same_v<std::remove_cv_t<ELEMENT_TYPE>, char>)
-						return do_print_data<char, std::dec, char_width>(address, count);
-					else {
-						assert(print_functions.count(format));
-						//delegate call to the true printing function. Format is no longer required as it is encoded in the template parameters
-						print_functions.at(format)(address, count);
+				void resolve_print_function_second(void* const address, std::ptrdiff_t const count, printing_format const format) {
+					if constexpr (std::is_same_v<std::decay_t<ELEMENT_TYPE>, char>) {
+						assert(format == printing_format::character);
+						return do_print_data<ELEMENT_TYPE, printing_format::character>(address, count);
 					}
+					else 	//delegate call to the true printing function.
+						switch (format) {
+						case printing_format::hex:
+							return do_print_data<ELEMENT_TYPE, printing_format::hex>(address, count);
+						case printing_format::oct:
+							return do_print_data<ELEMENT_TYPE, printing_format::oct>(address, count);
+						case printing_format::dec_signed:
+							return do_print_data<ELEMENT_TYPE, printing_format::dec_signed>(address, count);
+						case printing_format::dec_unsigned:
+							return do_print_data<ELEMENT_TYPE, printing_format::dec_unsigned>(address, count);
+							ASSERT_NO_OTHER_OPTION;
+						}
 				}
 
 
@@ -717,7 +778,7 @@ namespace bf::data_inspection {
 
 						if (current_instruction->op_code_ == op_code::breakpoint) { //if we encounter a breakpoint, we print the replaced instruction instead
 							//get the address of this instruction
-							std::ptrdiff_t const addr = std::distance<instruction const*>(execution::emulator.instructions_begin(), current_instruction);
+							std::ptrdiff_t const addr = distance_in_bytes(execution::emulator.instructions_begin(), current_instruction);
 							instruction const& replaced_instruction = breakpoints::bp_manager.get_replaced_instruction_at(addr); //the replaced instruction to be printed
 							auto const& breakpoints_here = breakpoints::bp_manager.get_breakpoints_at(addr); //get all breakpoints_here located at this address
 
@@ -731,7 +792,7 @@ namespace bf::data_inspection {
 							stream << current_instruction->op_code_ << ' ' << current_instruction->argument_; //normal instructions are simply printed
 						stream << '\n';
 					}
-					std::ptrdiff_t const instructions_not_printed = std::distance(current_instruction,static_cast<instruction const*>(starting_address) + count);
+					std::ptrdiff_t const instructions_not_printed = std::distance(current_instruction, static_cast<instruction const*>(starting_address) + count);
 					if (instructions_not_printed >= 0) { //If we reached the end of instruction memory, notify the user
 						stream << "End of memory has been reached.\n";
 						if (instructions_not_printed)
@@ -742,14 +803,14 @@ namespace bf::data_inspection {
 			} //namespace printer_functions
 
 			/*Perform dynamic dispatch and call appropriate callback for given type of data. Does not do much more...*/
-			void perform_print_function_resolution(request_params const& request) {
-				//static const map of function pointers which are used as a callback for given data_type 
-				static std::unordered_map<data_type, void(*)(void* const, std::ptrdiff_t const, printing_format const)> const print_functions{
-					{data_type::byte, printer_functions::resolve_data_printer_function<uint8_t>},
-					{data_type::word, printer_functions::resolve_data_printer_function<uint16_t>},
-					{data_type::dword, printer_functions::resolve_data_printer_function<std::uint32_t>},
-					{data_type::qword, printer_functions::resolve_data_printer_function<std::uint64_t>},
-					{data_type::character, printer_functions::resolve_data_printer_function<char>},
+			void resolve_print_function_first(request_params const& request) {
+				//static const map of function references that are used as a callback for given data_type 
+				static std::unordered_map<data_type, void(&)(void* const, std::ptrdiff_t const, printing_format const)> const print_functions{
+					{data_type::byte, printer_functions::resolve_print_function_second<std::uint8_t>},
+					{data_type::word, printer_functions::resolve_print_function_second<std::uint16_t>},
+					{data_type::dword, printer_functions::resolve_print_function_second<std::uint32_t>},
+					{data_type::qword, printer_functions::resolve_print_function_second<std::uint64_t>},
+					{data_type::character, printer_functions::resolve_print_function_second<char>},
 					{data_type::instruction, printer_functions::do_print_instructions}
 				};
 				assert(print_functions.count(request.type_));
@@ -794,8 +855,30 @@ namespace bf::data_inspection {
 			if (code)
 				return code;
 
-			helper::perform_print_function_resolution(request_params);
+			helper::resolve_print_function_first(request_params);
 			return 0;
+		}
+
+		namespace {
+
+			namespace registers_callback_helper {
+
+				void print_pc() {
+					std::cout << std::setw(20) << std::left << "Program Counter:";
+					std::ptrdiff_t const pc = execution::emulator.program_counter(),
+						mem = execution::emulator.instructions_size();
+					if (pc == mem)
+						std::cout << "Out of bounds. Execution finished.\n";
+					else
+						std::cout << pc << ", valid address space at [0, " << mem << ").\n";
+				};
+
+				void print_cpr() {
+					std::cout << std::setw(20) << std::left << "Cell Pointer:" << execution::emulator.cell_pointer_offset()
+						<< ", valid address space [0, " << execution::emulator.memory_size() << ").\n";
+				};
+
+			}
 		}
 
 
@@ -804,19 +887,7 @@ namespace bf::data_inspection {
 			if (int const code = utils::check_command_argc(1, 2, argv))
 				return code;
 
-			static auto constexpr print_pc = [] {
-				std::cout << std::setw(20) << std::left << "Program Counter:";
-				if (std::ptrdiff_t const pc = execution::emulator.program_counter(), mem = execution::emulator.instructions_size(); pc == mem)
-					std::cout << "Out of bounds. Execution finished.\n";
-				else
-					std::cout << pc << ", valid address space at [0, " << mem << ").\n";
-			};
-
-			static auto constexpr print_cpr = [] {
-				std::cout << std::setw(20) << std::left << "Cell Pointer:" << execution::emulator.cell_pointer_offset()
-					<< ", valid address space [0, " << execution::emulator.memory_size() << ").\n";
-			};
-
+			using namespace registers_callback_helper;
 
 			if (argv.size() == 1) { //no argument specified => print both of them
 				print_pc();
@@ -825,9 +896,9 @@ namespace bf::data_inspection {
 			}
 
 			//a register has been specified; identify it and print it's value
-			if (argv[1].compare("pc") == 0)
+			if (argv[1] == "pc")
 				print_pc();
-			else if (argv[1].compare("cpr") == 0)
+			else if (argv[1] == "cpr")
 				print_cpr();
 			else {
 				cli::print_command_error(cli::command_error::argument_not_recognized);
@@ -904,8 +975,8 @@ namespace bf::data_inspection {
 
 		cli::add_command("registers", cli::command_category::debugging, "Prints information about CPU's registers.",
 			"Usage: \"registers\" [name]\n"
-			"The optional parameter name may be specified to identify either the CPU's program counter or cell pointer\n"
-			"using reserved strings \"pc\" or \"cpr\" respectivelly.\n"
+			"The optional parameter name may be specified to identify the CPU's program counter or cell pointer\n"
+			"by using reserved strings \"pc\" or \"cpr\" respectivelly.\n"
 			"Without any parameters displays information about all registers."
 			, &registers_callback);
 		cli::add_command_alias("reg", "registers");

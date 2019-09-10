@@ -20,15 +20,15 @@ namespace bf {
 	/*Structure containing information about the result of a compilation; Mainly vector of syntax errors
 	and optionally syntax_tree provided compilation was successful are present.*/
 	struct compilation_result {
-		std::string source_code_; //code that has been compiled
+		std::string source_code_; //source code that has been compiled
 		std::vector<syntax_error> syntax_errors_; //vector of encountered syntax_errors
-		std::vector<std::unique_ptr<basic_block>> basic_blocks_; //compiled code. Holds value iff syntax_errors_ is empty
+		std::vector<std::unique_ptr<basic_block>> basic_blocks_; //compiled instructions.
 
 		template<typename A, typename B, typename C>
 		compilation_result(A&& source_code, B&& syntax_errors, C&& basic_blocks) noexcept
-			: source_code_{ std::forward<A&&>(source_code) },
-			syntax_errors_{ std::forward<B&&>(syntax_errors) },
-			basic_blocks_{ std::forward<C&&>(basic_blocks) }
+			: source_code_{ std::forward<A>(source_code) },
+			syntax_errors_{ std::forward<B>(syntax_errors) },
+			basic_blocks_{ std::forward<C>(basic_blocks) }
 		{}
 	};
 
@@ -50,6 +50,8 @@ namespace bf {
 
 		std::vector<instruction> generate_executable_code() {
 			assert(ready());
+
+			//TODO fix
 
 			std::vector<instruction> res;
 			res.reserve(std::accumulate(prev_compilation_result->basic_blocks_.cbegin(), prev_compilation_result->basic_blocks_.cend(), std::size_t(0),
@@ -107,28 +109,28 @@ namespace bf {
 			assert(syntax_validation_is_ok(source_code)); //one more test for the validity of the program
 
 			instructions_.reserve(2 + source_code.size()); //reserve enough space for all instructions and program prologue and epilogue
-			instructions_.emplace_back(op_code::program_entry, 1, -1); //the prologue - program's entry instruction
+			instructions_.push_back({ op_code::program_entry, 1, 0 }); //the prologue - program's entry instruction
 
 			for (std::size_t source_offset = 0; source_offset < source_code.size(); ++source_offset)  //loop though the code char by char
 				switch (source_code[source_offset]) { //and add a new instruction if the char is a command
-				case '+': instructions_.emplace_back(op_code::inc, 1, source_offset);	  break;
-				case '-': instructions_.emplace_back(op_code::dec, 1, source_offset);	  break;
-				case '<': instructions_.emplace_back(op_code::left, 1, source_offset);	  break;
-				case '>': instructions_.emplace_back(op_code::right, 1, source_offset);	  break;
-				case ',': instructions_.emplace_back(op_code::read, 0, source_offset);    break;
-				case '.': instructions_.emplace_back(op_code::write, 0, source_offset);   break;
+				case '+': instructions_.push_back({ op_code::inc, 1, source_offset });	  break;
+				case '-': instructions_.push_back({ op_code::inc, -1, source_offset });	  break;
+				case '>': instructions_.push_back({ op_code::right, 1, source_offset });	  break;
+				case '<': instructions_.push_back({ op_code::right, -1, source_offset });	  break;
+				case ',': instructions_.push_back({ op_code::read, 1, source_offset });    break;
+				case '.': instructions_.push_back({ op_code::write, 1, source_offset });   break;
 				case '[':
-					instructions_.emplace_back(op_code::jump, 0xdead'beef, source_offset); //Argument will be resolved later
+					instructions_.push_back({ op_code::jump, std::ptrdiff_t(0xdead'beef), source_offset }); //Argument will be resolved later
 					jumps_.push_back(&instructions_.back());
 					break;
 				case ']':
-					instructions_.emplace_back(op_code::jump_not_zero, 0xdead'beef, source_offset);
+					instructions_.push_back({ op_code::jump_not_zero, std::ptrdiff_t(0xdead'beef), source_offset });
 					jumps_.push_back(&instructions_.back());
 					break;
-					//any other characater is only a comment so we ignore it
+					//any other characater is only a comment, therefore we ignore it
 				}
 
-			instructions_.emplace_back(op_code::program_exit, 1, -1); //the epilogue of the program
+			instructions_.push_back({ op_code::program_exit, 1, source_code.size() }); //the epilogue of the program
 			assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
 		}
 
@@ -139,7 +141,7 @@ namespace bf {
 			//make sure that the generated source_code has proper format
 			assert(instructions_.front().op_code_ == op_code::program_entry && instructions_.back().op_code_ == op_code::program_exit);
 			assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
-			assert(std::all_of(jumps_.cbegin(), jumps_.cend(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
+			assert(std::all_of(jumps_.cbegin(), jumps_.cend(), std::mem_fn(&instruction::is_jump)));
 
 			/*Each label marks a single leader. Leaders of basic blocks are found by applying the following algorithm:
 				1) The first instruction is a leader.
@@ -148,12 +150,12 @@ namespace bf {
 				*/
 
 				//For unconditional jumps, their destination (conditional jump) is a leader 
-				//For conditional jumps, their destination (unconditional jump) and well as the instruction after them (fallthrough) are leaders
+				//For conditional jumps, their destination and well as the instruction after them (fallthrough) are leaders
 				//Two additional labels for program_entry and one past program_exit instructions
-			labels_.reserve(jumps_.size() + jumps_.size() / 2 + 2);
+			std::size_t const expected_label_count = jumps_.size() + jumps_.size() / 2 + 2;
+			labels_.reserve(expected_label_count);
 
 			labels_.push_back(&instructions_.front()); //the entry instruction is a leader
-
 
 			for (instruction const* const jump : jumps_)  //see comment five lines above
 				if (jump->op_code_ == op_code::jump)
@@ -166,7 +168,7 @@ namespace bf {
 					MUST_NOT_BE_REACHED;
 
 			labels_.push_back(&instructions_.back() + 1); //one more label pointign at the past the end instruction
-			assert(labels_.size() == labels_.capacity()); //all precalculated capacity should have been filled
+			assert(labels_.size() == expected_label_count); //all precalculated capacity should have been filled
 
 			//there may be multiple labels on the same instruction with this code (two ']' in a row)
 			auto const unique_end = std::unique(labels_.begin(), labels_.end()); //remove multiple labels on the same instruction (may happen because of an empty loop)
@@ -180,10 +182,10 @@ namespace bf {
 			//make sure that the generated source_code has proper format
 			assert(instructions_.front().op_code_ == op_code::program_entry && instructions_.back().op_code_ == op_code::program_exit);
 			assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
-			assert(std::all_of(std::execution::par_unseq, jumps_.begin(), jumps_.end(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
+			assert(std::all_of(std::execution::seq, jumps_.begin(), jumps_.end(), std::mem_fn(&instruction::is_jump)));
 			//assert that all jump instructions are contained in the jumps_ vector
-			assert(jumps_.size() == std::size_t(std::count_if(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump(); })));
-			assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [this](instruction const& i) {return i.is_jump() ? std::find(jumps_.begin(), jumps_.end(), &i) != jumps_.end() : true; }));
+			assert(jumps_.size() == std::size_t(std::count_if(std::execution::seq, instructions_.begin(), instructions_.end(), std::mem_fn(&instruction::is_jump))));
+			assert(std::all_of(std::execution::seq, instructions_.begin(), instructions_.end(), [this](instruction const& i) {return i.is_jump() ? std::find(jumps_.begin(), jumps_.end(), &i) != jumps_.end() : true; }));
 
 			//we have a std::vector<instruction *> containing jump instructions
 			//and a std::vector<instruction *> with labels. Element at labels_[i] is the address of instruction under the i-th label
@@ -221,7 +223,7 @@ namespace bf {
 				}
 
 			//all instructions must have their destination different from 0xdead'beef placeholder value
-			assert(std::none_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump() ? i.destination_ == 0xdead'beef : false; }));
+			assert(std::none_of(std::execution::seq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump() ? i.destination_ == 0xdead'beef : false; }));
 		}
 
 		std::vector<std::unique_ptr<basic_block>> construct_program_blocks() const {
@@ -231,12 +233,12 @@ namespace bf {
 				//make sure that the generated source_code has proper format
 				assert(instructions_.front().op_code_ == op_code::program_entry && instructions_.back().op_code_ == op_code::program_exit);
 				assert(jumps_.size() % 2 == 0); //there must be an even number of jump instructions 
-				assert(std::all_of(std::execution::par_unseq, jumps_.begin(), jumps_.end(), [](instruction const* const ptr) -> bool { return ptr->is_jump(); }));
+				assert(std::all_of(std::execution::seq, jumps_.begin(), jumps_.end(), std::mem_fn(&instruction::is_jump)));
 				//assert that all jump instructions are contained in the jumps_ vector
-				assert(jumps_.size() == std::size_t(std::count_if(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump(); })));
-				assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [this](instruction const& i) {return i.is_jump() ? std::find(jumps_.begin(), jumps_.end(), &i) != jumps_.end() : true; }));
+				assert(jumps_.size() == std::size_t(std::count_if(std::execution::seq, instructions_.begin(), instructions_.end(), std::mem_fn(&instruction::is_jump))));
+				assert(std::all_of(std::execution::seq, instructions_.begin(), instructions_.end(), [this](instruction const& i) {return i.is_jump() ? std::find(jumps_.begin(), jumps_.end(), &i) != jumps_.end() : true; }));
 				//all instructions must have their destination different from 0xdead'beef placeholder value
-				assert(std::all_of(std::execution::par_unseq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump() ? i.destination_ != 0xdead'beef : true; }));
+				assert(std::all_of(std::execution::seq, instructions_.begin(), instructions_.end(), [](instruction const& i) {return i.is_jump() ? i.destination_ != 0xdead'beef : true; }));
 			}
 
 			std::vector<std::unique_ptr<basic_block>> basic_blocks;
@@ -244,19 +246,17 @@ namespace bf {
 
 			for (std::size_t index = 0; index < labels_.size() - 1; ++index)
 				basic_blocks.push_back(std::make_unique<basic_block>(static_cast<std::ptrdiff_t>(index),
-					std::vector(labels_[index], labels_[index + 1]), //instructions 
-					std::vector<basic_block*>{}, //predecessors
-					nullptr, nullptr)); //natural and jump successor
+					std::vector(labels_[index], labels_[index + 1]))); //instructions 
 
 
-			assert(basic_blocks.size() >= 1); //otherwise the following loop would be infinite
+			assert(basic_blocks.size()); //otherwise the following loop would be infinite
 			for (std::size_t i = 0; i < basic_blocks.size() - 1; ++i)
-				switch (auto & last_instruction = basic_blocks[i]->ops_.back(); last_instruction.op_code_) {
+				switch (instruction& last_instruction = basic_blocks[i]->ops_.back(); last_instruction.op_code_) {
 				case op_code::jump:
 				case op_code::jump_not_zero:
 
 					basic_blocks[i]->jump_successor_ = basic_blocks[last_instruction.destination_].get();
-					basic_blocks[last_instruction.destination_]->predecessors_.push_back(basic_blocks[i].get());
+					basic_blocks[last_instruction.destination_]->predecessors_.insert(basic_blocks[i].get());
 					//We set the target of this jump to some invalid value, because during the process of optimizations, we'll be using pointers
 					last_instruction.destination_ = 0xdead'beef;
 
@@ -265,7 +265,7 @@ namespace bf {
 
 				default:
 					basic_blocks[i]->natural_successor_ = basic_blocks[i + 1].get();
-					basic_blocks[i + 1]->predecessors_.push_back(basic_blocks[i].get());
+					basic_blocks[i + 1]->predecessors_.insert(basic_blocks[i].get());
 
 					break;
 				}
@@ -313,15 +313,10 @@ namespace bf {
 
 			resolve_jump_targets();
 
-
-			auto res = construct_program_blocks();
-			print_basic_blocks(res);
-			return res;
+			return construct_program_blocks();
 		}
 
 	};
-
-	//<<[[>+<-]>[-]]
 
 	namespace {
 
@@ -351,11 +346,11 @@ namespace bf {
 			/*Reads the source code for compilation and reports errors if reading does not succeed.
 			If the arguments are ok, returns std::optional containing the source code. An empty object is returned otherwise.*/
 			std::optional<std::string> get_source_code(std::string_view const source, std::string_view const arg) {
-				if (source.compare("code") == 0) //second arg is raw source code
+				if (source == "code") //second arg is raw source code
 					return std::string{ arg };
 
 				//the first arg is "file", therefore the second one is file name
-				if (source.compare("file") == 0) {
+				if (source == "file") {
 					std::optional<std::string> const file_content = utils::read_file(arg);
 					if (!file_content.has_value()) //if file doesn't exist, print error
 						cli::print_command_error(cli::command_error::file_not_found);
@@ -456,11 +451,11 @@ namespace bf {
 				return 0;
 			}
 
-			if (argv[1].compare("all") == 0)
+			if (argv[1] == "all")
 				return helper::print_syntax_errors(false);
-			else if (argv[1].compare("full") == 0)
+			else if (argv[1] == "full")
 				return helper::print_syntax_errors(true);
-			else if (argv[1].compare("count") == 0) {
+			else if (argv[1] == "count") {
 				if (std::size_t const count = previous_compilation::syntax_errors().size(); count == 1u)
 					std::cout << "There has been one error.\n";
 				else

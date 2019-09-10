@@ -65,14 +65,13 @@ namespace bf::execution {
 
 	/*CPU's FLAGS register. Stores its state as a bitfield and allows access through flag_references.*/
 	class flags_register final {
-		using value_type = std::underlying_type_t<flag>;
-		value_type value_ = 0;
+		std::underlying_type_t<flag> value_ = 0;
 
 
 	public:
 		//default state is all flags zero
 		flags_register() noexcept = default;
-		explicit flags_register(value_type value) noexcept : value_{ value } {}
+		explicit flags_register(std::underlying_type_t<flag> value) noexcept : value_{ value } {}
 
 
 		[[nodiscard]]
@@ -98,23 +97,6 @@ namespace bf::execution {
 		[[nodiscard]]
 		flag_reference<flag::suppress_stop_interrupt> volatile suppress_stop_interrupt() volatile {
 			return value_;
-		}
-
-		[[nodiscard]]
-		bool get(flag const flag) volatile {
-			return value_ & static_cast<value_type>(flag);
-		}
-
-		void flip(flag const flag) volatile {
-			value_ ^= static_cast<value_type>(flag);
-		}
-
-		void set(flag const flag) volatile {
-			value_ |= static_cast<value_type>(flag);
-		}
-
-		void clear(flag const flag) volatile {
-			value_ &= ~static_cast<value_type>(flag);
 		}
 
 		void reset() volatile {
@@ -167,8 +149,6 @@ namespace bf::execution {
 		breakpoint_hit flag and proceeds with execution. Otherwise emulator is stopped and breakpoints get handled.*/
 		void breakpoint_interrupt_handler();
 
-		/*MicroOP code for "left". Moves CPR one cell to the left wrapping around the boundaries.*/
-		void left(std::ptrdiff_t count);
 		/*MicroOP code for the "right" instruction. Advances the CPR one cell to right and wraps it around the boundary of memory if such
 		shift would overflow.*/
 		void right(std::ptrdiff_t count);

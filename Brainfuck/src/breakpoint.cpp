@@ -39,6 +39,9 @@ namespace bf::breakpoints {
 
 	int breakpoint_manager::get_unused_breakpoint_id() const {
 
+		if (all_breakpoints_.empty())
+			return 0;
+
 		/*Map of breakpoints is sorted in ascending order. Find two consecutive elements, whose keys' difference
 		is greater than one. If such two elements are found, they are separated by a gap - an unused ID is found.
 		Iterator pointing to element with key one less than the unused id to be returned.*/
@@ -103,7 +106,6 @@ namespace bf::breakpoints {
 		assert(std::addressof(all_breakpoints_.at(bp->id_)) == bp); //make sure the argument bp points into the internal map
 		assert(breakpoint_locations_.count(bp->address_)); //make sure breakpoint location exists
 		assert(breakpoint_locations_.at(bp->address_).breakpoints_here_.count(bp)); //make sure specified location contains the bp
-		assert(std::find(hit_breakpoints_.cbegin(), hit_breakpoints_.cend(), bp) == hit_breakpoints_.cend()); //make sure the breakpoint is no longer used
 
 		location& brk_location = breakpoint_locations_.at(bp->address_); //get the breakpoint location
 		brk_location.breakpoints_here_.erase(bp); //remove current breakpoint from this location

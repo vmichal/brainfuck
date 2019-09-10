@@ -59,18 +59,15 @@ namespace bf::execution {
 		}
 	}
 
-	void cpu_emulator::left(std::ptrdiff_t const count) {
-		assert(count > 0);
-		cell_pointer_reg_ -= count;
-		while (cell_pointer_reg_ < memory_begin())  //if the value exceeds memory's bounds
-			cell_pointer_reg_ += memory_size();
-	}
-
-	void cpu_emulator::right(std::ptrdiff_t const count) {
-		assert(count > 0);
+	void cpu_emulator::right(std::ptrdiff_t count) {
+		assert(count != 0);
+		count %= memory_size();
 		cell_pointer_reg_ += count;
-		while (cell_pointer_reg_ >= memory_end())   //if the value exceeds memory's bounds
+
+		if (cell_pointer_reg_ >= memory_end())   //if the value exceeds memory's bounds
 			cell_pointer_reg_ -= memory_size();
+		else if (cell_pointer_reg_ < memory_begin())
+			cell_pointer_reg_ += memory_size();
 	}
 
 	void cpu_emulator::do_execute(instruction const& instruction) {
@@ -80,12 +77,6 @@ namespace bf::execution {
 			break;
 		case op_code::inc: //increase value of cell under the pointer
 			*cell_pointer_reg_ += static_cast<memory_cell_t>(instruction.argument_);
-			break;
-		case op_code::dec: //decrease the value of cell under the pointer
-			*cell_pointer_reg_ -= static_cast<memory_cell_t>(instruction.argument_);
-			break;
-		case op_code::left: //move the pointer to left
-			left(instruction.argument_);
 			break;
 		case op_code::right: //move the pointer to right
 			right(instruction.argument_);

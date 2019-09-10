@@ -86,9 +86,8 @@ namespace bf::cli {
 					return nullptr;
 				}
 				//If we have found a string (seemingly alias), which has already been tested before, recusrion has been proven. Break out of it
-				if (std::any_of(recursive_searches.cbegin(), recursive_searches.cend(),
-					[&cmd_name](std::string_view const view) { return view.compare(cmd_name) == 0; })) {
-					std::cout << "You thought that recursive alias will blow my program up, right? Wrong. It has taken me only "
+				if (std::find(recursive_searches.cbegin(), recursive_searches.cend(), cmd_name) != recursive_searches.cend()) {
+					std::cout << "You thought that recursive aliases will blow my program up, right? Wrong. It has taken me only "
 						<< recursive_searches.size() << " recursive call" << utils::print_plural(recursive_searches.size())
 						<< " to reveal your evil plans! Returning.\n";
 					return nullptr;
@@ -112,16 +111,13 @@ namespace bf::cli {
 		int quit_callback(command_parameters_t const& argv) {
 			if (int const code = utils::check_command_argc(1, 2, argv))
 				return code; //Accepts name of command plus one optional argument
-			if (argv.size() == 2) //Optional argument had been specified
-				if (int ret_code; std::from_chars(argv[1].data(), argv[1].data() + argv[1].size(), ret_code).ec != std::errc{}) {
-					//Argument contained invalid characters => print error and return
-					print_command_error(command_error::argument_not_recognized);
-					return 2;
-				}
-				else //Convert legal string argument to number and exit program 
-					std::exit(ret_code);
-			//No argument had been specified, return zero to OS
-			std::exit(0);
+			if (argv.size() == 1) //No argument had been specified, return zero to OS
+				std::exit(0);
+			//Optional argument was specified
+			if (auto const ret_code = utils::parse_int_argument(argv[1]); !ret_code.has_value())
+				return 2;
+			else //Convert legal string argument to number and exit program 
+				std::exit(*ret_code);
 		}
 
 		/*Namespace wrapping helper functions and types for "help_callback" function. Polluting global namesapce is illegal!*/
@@ -130,17 +126,18 @@ namespace bf::cli {
 			/*Returns a string containing some general advice on how to use the program*/
 			[[nodiscard]]
 			std::string get_general_help() {
+				using namespace std::string_literals;
 				return "Basic features of the program:\n"
-					"1) If the first character of a command is exclamation mark (!), it is stripped and the remaining string gets executed by the operating system's shell.\n"
+					"1) If the first character of a command is exclamation mark (!), it is stripped and the string is executed by the operating system's command interpreter.\n"
 					"2) CLI commands usually expect parameters, which are described in their help message. Don't be afraid to use the \"help\" command a lot, it is the "
 					"best way to learn.\n"
 					"3) The CLI keeps it's history of executed commands. It is possible to browse it using the \"history\" command and it is possible to retrospectively execute"
 					" previous commands as well.\n"
 					"4) There are hooks. Hooks are normal commands that have been linked with another one and get executed automatically right after it."
 					"To learn more about hooks and the way they are defined, see the \"define\" command.\n"
-					"5) There is a pseudocommand called \"stop\". It cannot be deleted or changed and is automatically executed every time the emulator's execution stops."
-					"You can define a hook for this command, which is enables you for example to print the state of CPU and memory every time the execution hits"
-					"a breakpoint, executes a instruction in single-step mode, receives OS interrupt and so on.\n";
+					"5) There is a pseudocommand called \"stop\". It can be neither deleted nor changed and is automatically executed every time the emulator's execution stops."
+					"You can define a hook for this command, which allows you to automatically issue a call to a sequence of commands every time the execution hits "
+					"a breakpoint, executes a instruction in single-step mode, receives OS interrupt and so on.\n"s;
 			}
 
 			/*Returns string containing short help for all defined commands. Called from help_command.*/
@@ -196,10 +193,11 @@ namespace bf::cli {
 		*/
 		int help_callback(command_parameters_t const& argv) {
 
-			int code = utils::check_command_argc(1, 2, argv);  //Accepts zero or one argument plus command name
-			if (code)
+			if (int const code = utils::check_command_argc(1, 2, argv))  //Accepts zero or one argument plus command name
 				return code;
-			if (argv.size() == 1 || argv[1].compare("all") == 0) //no argument or string "all" => print list of commands and general help
+
+			int code = 0;
+			if (argv.size() == 1 || argv[1] == "all") //no argument or string "all" => print list of commands and general help
 				std::cout << help_callback_helper::get_general_help() << '\n' << help_callback_helper::get_all_commands_help();
 			else  //A single argument with name of command had been passed 
 				code = help_callback_helper::print_command_help(argv[1]);
@@ -235,12 +233,12 @@ namespace bf::cli {
 			std::pair<int, bool> check_params(command_parameters_t const& argv) {
 				if (int const code = utils::check_command_argc(2, 3, argv))
 					return { code, false }; //Accepts only the command name and optinal "hook"
-				bool const hook = argv[1].compare("hook") == 0;
+				bool const hook = argv[1] == "hook";
 				if (argv.size() == 2 && hook) { //Only one argument has been passed and it is the "hook" keyword => return
 					print_command_error(command_error::argument_required);
 					return { 3, hook };
 				}
-				if (argv[1].compare("stop") == 0) {
+				if (argv[1] == "stop") {
 					std::cerr << "The \"stop\" command cannot be modified.\n";
 					return { 4, hook };
 				}
@@ -289,7 +287,7 @@ namespace bf::cli {
 				for (;;) {
 					std::cout << "(define " << std::quoted(cmd_name) << ") ";
 					std::getline(std::cin, line);
-					if (line.compare("end") == 0) //we have found the terminating "end"
+					if (line == "end") //we have found the terminating "end"
 						break;
 					if (!line.empty()) //Add all non empty lines to vector
 						command_sequence.emplace_back(std::move(line));
@@ -352,14 +350,14 @@ namespace bf::cli {
 		int undefine_callback(command_parameters_t const& argv) {
 			if (int const code = utils::check_command_argc(2, 2, argv))
 				return code; //expects one argument
-			if (argv[1].compare("stop") == 0) {
+			if (argv[1] == "p") {
 				std::cerr << "Cannot undefine the \"stop\" command.\n";
 				return 9;
 			}
 			std::string cmd_name{ argv[1] };
 			if (is_command(cmd_name)) { //If we can delete a command
 				command* cmd = get_command(cmd_name);
-				for (auto & pair : cmd_map)
+				for (auto& pair : cmd_map)
 					if (pair.second.hook() == cmd)  //find all commands that have this command as hook
 						pair.second.hook() = nullptr; //and set their hook to null
 				cmd_map.erase(cmd_name); //finally erase cmd_name itself
@@ -392,9 +390,9 @@ namespace bf::cli {
 					return documentation_type::none;
 
 				documentation_type const documentation_type = [&] { //IIFE (immidiatelly invoked function expression) to initialize const variable with complex code
-					if (argv[1].compare("short") == 0) //if optional "short" has been specified
+					if (argv[1] == "short") //if optional "short" has been specified
 						return documentation_type::short_desc;
-					if (argv[1].compare("full") == 0) //if optional "full" has been specified
+					if (argv[1] == "full") //if optional "full" has been specified
 						return documentation_type::full;
 					return documentation_type::none; //if neither has appeared, return special value 
 				}();
@@ -425,7 +423,7 @@ namespace bf::cli {
 				for (;;) {
 					std::cout << "(document \"" << command.name() << "\")";
 					std::getline(std::cin, line);
-					if (line.compare("end") == 0) //single "end" ends reading loop
+					if (line == "end") //single "end" ends reading loop
 						break;
 					if (!line.empty()) //append all non-empty lines
 						stream << line << '\n';
@@ -547,9 +545,9 @@ namespace bf::cli {
 			std::pair<requested_action, int> parse_parameters(command_parameters_t const& argv) {
 
 				requested_action requested_action = requested_action::none;
-				if (argv[1].compare("show") == 0)
+				if (argv[1] == "show")
 					requested_action = requested_action::show;
-				else if (argv[1].compare("exe") == 0)
+				else if (argv[1] == "exe")
 					requested_action = requested_action::execute;
 				else {
 					print_command_error(command_error::argument_not_recognized);
@@ -798,12 +796,13 @@ namespace bf::cli {
 
 	void initialize() {
 		ASSERT_IS_CALLED_ONLY_ONCE;
-			add_command("quit", command_category::general, "Exits the program.",
-				"Usage: \"quit\" [return_code]\n"
-				"Optional return code is returned to the OS; zero is used if it's left unspecified."
-				, &quit_callback);
+		add_command("quit", command_category::general, "Exits the program.",
+			"Usage: \"quit\" [return_code]\n"
+			"Optional return code is returned to the OS; zero is used if it's left unspecified."
+			, &quit_callback);
 		add_command_alias("exit", "quit");
 		add_command_alias("q", "quit");
+		add_command_alias("rip", "quit");
 
 		add_command("help", command_category::general, "Prints out help messages.",
 			"Usage: \"help\" [command_name]\n"
