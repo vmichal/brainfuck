@@ -34,10 +34,10 @@ namespace bf::analysis {
 
 		enum class state { valid, too_low, too_far, no_range } state_ = state::valid;
 
-		friend class ptr_movement_local_result;
+		friend class pointer_movement;
 	public:
 
-		same_offset_iterator() : state_{state::no_range} {}
+		same_offset_iterator() : state_{ state::no_range } {}
 
 		same_offset_iterator(std::vector<instruction>::iterator inst, std::vector<ptr_stationary_range>::iterator range,
 			bounds bounds)
@@ -60,10 +60,11 @@ namespace bf::analysis {
 	};
 
 
-	class ptr_movement_local_result {
+	class pointer_movement {
 
+		basic_block* const subject_;
 		std::vector<ptr_stationary_range> stationary_ranges_;
-		std::ptrdiff_t final_ptr_offset_;
+		std::ptrdiff_t ptr_delta_ = 0;
 		bool ptr_moves_ = false;
 
 		std::vector<ptr_stationary_range>::iterator get_range_iter(std::vector<instruction>::iterator inst) {
@@ -81,14 +82,21 @@ namespace bf::analysis {
 			return { lower, upper };
 		}
 
-		friend ptr_movement_local_result analyze_pointer_movement_local(basic_block*);
+		void do_analyze();
 	public:
 
+		explicit pointer_movement(basic_block*);
+
+		static pointer_movement analyze(basic_block* const block) { return pointer_movement{ block }; }
+
 		[[nodiscard]]
-		std::ptrdiff_t final_offset() const { return final_ptr_offset_; }
+		std::ptrdiff_t ptr_delta() const { return ptr_delta_; }
 
 		[[nodiscard]]
 		bool ptr_moves() const { return ptr_moves_; }
+
+		[[nodiscard]]
+		bool only_moves_ptr() const { return ptr_moves_ && stationary_ranges_.empty(); }
 
 		[[nodiscard]]
 		same_offset_iterator offset_iterator(std::vector<instruction>::iterator inst) {
@@ -111,9 +119,7 @@ namespace bf::analysis {
 		}
 	};
 
-	ptr_movement_local_result analyze_pointer_movement_local(basic_block* block);
-
-	class block_evaluation_analyzer {
+	class block_evaluation {
 
 	public:
 		enum class result_state {
@@ -130,42 +136,48 @@ namespace bf::analysis {
 		void analyze_predecessors();
 		void analyze_within_block();
 
+
+
 	private:
 		basic_block* const subject_;
 		result_state state_ = result_state::unknown;
 		std::ptrdiff_t entry_value_ = 0xdead'beef;
-		std::ptrdiff_t result_ = 0xdead'beef;
+		std::ptrdiff_t const_result_ = 0xdead'beef;
 		std::ptrdiff_t value_delta_ = 0;
 		bool has_sideeffect_ = false;
 
-		ptr_movement_local_result ptr_movement_;
+		pointer_movement ptr_movement_;
 	public:
-		explicit block_evaluation_analyzer(basic_block* block);
+
+		static block_evaluation analyze(basic_block* const block) {
+			return block_evaluation{ block };
+		}
+
+		explicit block_evaluation(basic_block*);
 
 		[[nodiscard]]
 		bool has_const_result() const { return state_ == result_state::known_constant; }
 		[[nodiscard]]
-		std::ptrdiff_t result() const { return result_; }
+		std::ptrdiff_t const_result() const { return const_result_; }
 
 		[[nodiscard]]
 		bool has_non_zero_result() const {
-			return (has_const_result() && result_ != 0) || state_ == result_state::known_not_zero;
+			return (has_const_result() && const_result_ != 0) || state_ == result_state::known_not_zero;
 		}
 
 		[[nodiscard]]
 		bool has_indeterminate_value() const { return !has_const_result() && !has_non_zero_result(); }
 
 		[[nodiscard]]
-		bool has_sideeffects() const { return has_sideeffect_ ||ptr_movement_.ptr_moves(); }
+		bool has_visible_sideeffects() const { return has_sideeffect_ || ptr_movement_.ptr_moves(); }
 		[[nodiscard]]
 		std::ptrdiff_t value_delta() const {
-			assert(!has_const_result() && !has_sideeffects());
+			assert(!has_const_result() && !has_visible_sideeffects());
 			return value_delta_;
 		}
 	};
 
 
-	block_evaluation_analyzer analyze_block_evaluation(basic_block const* block);
 
 	std::map<std::ptrdiff_t, bool> analyze_block_lives(std::vector<basic_block*> const& program);
 

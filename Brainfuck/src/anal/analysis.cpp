@@ -1,4 +1,4 @@
-#include "analysis.h"
+#include "anal/analysis.h"
 
 #include <numeric>
 #include <algorithm>
@@ -73,39 +73,34 @@ namespace bf::analysis {
 		return state_ == state::valid;
 	}
 
-	ptr_movement_local_result analyze_pointer_movement_local(basic_block* const block) {
+	pointer_movement::pointer_movement(basic_block* const block)
+		: subject_{ block } {
+		assert(block);
+		do_analyze();
+	}
 
-		ptr_movement_local_result result;
+	void pointer_movement::do_analyze() {
+		assert(subject_ && ptr_delta_ == 0 && !ptr_moves_);
+		assert(stationary_ranges_.empty());
 
-		std::ptrdiff_t current_offset = 0;
+		auto first_shift_op = subject_->ops_.begin();
 
-		auto first_shift_op = block->ops_.begin();
-
-		for (auto const [begin, end] : utils::iterate_ranges_if(block->ops_.begin(), block->ops_.end(), std::not_fn(std::mem_fn(&instruction::is_shift)))) {
-			current_offset += std::transform_reduce(first_shift_op, begin, std::ptrdiff_t{ 0 }, std::plus{}, std::mem_fn(&instruction::argument));
-			if (current_offset)
-				result.ptr_moves_ = true;
-			result.stationary_ranges_.push_back({ current_offset, begin, end });
+		for (auto const [begin, end] : utils::iterate_ranges_if(subject_->ops_.begin(), subject_->ops_.end(), std::not_fn(std::mem_fn(&instruction::is_shift)))) {
+			ptr_delta_ += std::transform_reduce(first_shift_op, begin, std::ptrdiff_t{ 0 }, std::plus{}, std::mem_fn(&instruction::argument));
+			if (ptr_delta_)
+				ptr_moves_ = true;
+			stationary_ranges_.push_back({ ptr_delta_, begin, end });
 			first_shift_op = end;
 		}
-		std::stable_sort(result.stationary_ranges_.begin(), result.stationary_ranges_.end());
+		std::stable_sort(stationary_ranges_.begin(), stationary_ranges_.end());
 
-		current_offset += std::transform_reduce(first_shift_op, block->ops_.end(), std::ptrdiff_t{ 0 },
+		ptr_delta_ += std::transform_reduce(first_shift_op, subject_->ops_.end(), std::ptrdiff_t{ 0 },
 			std::plus{}, std::mem_fn(&instruction::argument));
-		if (current_offset)
-			result.ptr_moves_ = true;
-
-		result.final_ptr_offset_ = current_offset;
-
-		return result;
+		if (ptr_delta_)
+			ptr_moves_ = true;
 	}
 
-	block_evaluation_analyzer analyze_block_evaluation(basic_block* const block) {
-
-		return block_evaluation_analyzer{ block };
-	}
-
-	void block_evaluation_analyzer::analyze_predecessors() {
+	void block_evaluation::analyze_predecessors() {
 		if (ptr_movement_.ptr_moves())
 			return; //result of this block is not dependent on the result of previous
 		switch (subject_->predecessors_.size()) {
@@ -115,11 +110,11 @@ namespace bf::analysis {
 			break;
 		case 1:
 		{
-			block_evaluation_analyzer const pred_analysis{ subject_->get_unique_predecessor() };
+			block_evaluation const pred_analysis{ subject_->get_unique_predecessor() };
 
 			state_ = pred_analysis.state_;
 			if (state_ == result_state::known_constant)
-				entry_value_ = pred_analysis.result_;
+				entry_value_ = pred_analysis.const_result_;
 
 		}
 		default: // TODO implement analysis for multiple predecessors
@@ -127,22 +122,22 @@ namespace bf::analysis {
 		}
 	}
 
-	void block_evaluation_analyzer::analyze_within_block() {
+	void block_evaluation::analyze_within_block() {
 
-		auto iterator = ptr_movement_.offset_iterator(ptr_movement_.final_offset());
+		auto iterator = ptr_movement_.offset_iterator(ptr_movement_.ptr_delta());
 
 		for (; iterator; ++iterator) {
 			instruction const& inst = *iterator;
 			if (inst.is_arithmetic()) {
 				value_delta_ += inst.argument_;
 				if (state_ == result_state::known_constant)
-					result_ += inst.argument_;
+					const_result_ += inst.argument_;
 				else if (state_ == result_state::known_not_zero)
 					state_ = result_state::indeterminate_possible_overflow;
 			}
 			else if (inst.is_const()) {
 				state_ = result_state::known_constant;
-				result_ = inst.argument_;
+				const_result_ = inst.argument_;
 			}
 			else
 				switch (inst.op_code_) {
@@ -150,7 +145,7 @@ namespace bf::analysis {
 					has_sideeffect_ = true;
 					if (inst.is_infinite_on_non_zero()) {
 						state_ = result_state::known_constant;
-						result_ = 0;
+						const_result_ = 0;
 					}
 					else if (inst.is_infinite_on_zero())
 						state_ = result_state::known_not_zero;
@@ -158,20 +153,22 @@ namespace bf::analysis {
 						MUST_NOT_BE_REACHED;
 					break;
 				case op_code::read:
-					has_sideeffect_ = true;
 					state_ = result_state::indeterminate_read;
+					[[fallthrough]] ;
+				case op_code::write:
+					has_sideeffect_ = true;
 					break;
 				}
 
 		}
 	}
 
-	block_evaluation_analyzer::block_evaluation_analyzer(basic_block* const block)
-		: subject_{ block }, ptr_movement_{ analyze_pointer_movement_local(subject_) } {
+	block_evaluation::block_evaluation(basic_block* const block)
+		: subject_{ block }, ptr_movement_{ subject_ } {
 		assert(block);
 
 		analyze_predecessors();
-		result_ = entry_value_;
+		const_result_ = entry_value_;
 		analyze_within_block();
 	}
 
@@ -241,7 +238,7 @@ namespace bf::analysis {
 		if (pred->is_pure_cjump())
 			(pred->jump_successor_ == subject_ ? non_zero_seen_ : zero_seen_) = true;
 		else
-			if (block_evaluation_analyzer const eval{ pred }; eval.has_indeterminate_value())
+			if (block_evaluation const eval{ pred }; eval.has_indeterminate_value())
 				zero_seen_ = non_zero_seen_ = true;
 			else
 				(eval.has_non_zero_result() ? non_zero_seen_ : zero_seen_) = true;

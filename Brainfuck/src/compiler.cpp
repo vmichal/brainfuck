@@ -99,6 +99,7 @@ namespace bf {
 			instructions_.clear();
 			jumps_.clear();
 			labels_.clear();
+
 		}
 
 
@@ -106,7 +107,7 @@ namespace bf {
 		for execution as all jumps in the code get relocated to point to destinations correctly. */
 		void generate_intermediate_code(std::string_view const source_code) {
 			//invalid source code cannot appear here; it must be tested against functions from the syntax_check.h header
-			assert(syntax_validation_is_ok(source_code)); //one more test for the validity of the program
+			assert(is_syntactically_valid(source_code)); //one more test for the validity of the program
 
 			instructions_.reserve(2 + source_code.size()); //reserve enough space for all instructions and program prologue and epilogue
 			instructions_.push_back({ op_code::program_entry, 1, 0 }); //the prologue - program's entry instruction
@@ -115,16 +116,16 @@ namespace bf {
 				switch (source_code[source_offset]) { //and add a new instruction if the char is a command
 				case '+': instructions_.push_back({ op_code::inc, 1, source_offset });	  break;
 				case '-': instructions_.push_back({ op_code::inc, -1, source_offset });	  break;
-				case '>': instructions_.push_back({ op_code::right, 1, source_offset });	  break;
-				case '<': instructions_.push_back({ op_code::right, -1, source_offset });	  break;
-				case ',': instructions_.push_back({ op_code::read, 1, source_offset });    break;
-				case '.': instructions_.push_back({ op_code::write, 1, source_offset });   break;
+				case '>': instructions_.push_back({ op_code::right, 1, source_offset });  break;
+				case '<': instructions_.push_back({ op_code::right, -1, source_offset }); break;
+				case ',': instructions_.push_back({ op_code::read, 1, source_offset });   break;
+				case '.': instructions_.push_back({ op_code::write, 1, source_offset });  break;
 				case '[':
-					instructions_.push_back({ op_code::jump, std::ptrdiff_t(0xdead'beef), source_offset }); //Argument will be resolved later
+					instructions_.push_back({ op_code::jump, std::ptrdiff_t{0xdead'beef}, source_offset }); //Argument will be resolved later
 					jumps_.push_back(&instructions_.back());
 					break;
 				case ']':
-					instructions_.push_back({ op_code::jump_not_zero, std::ptrdiff_t(0xdead'beef), source_offset });
+					instructions_.push_back({ op_code::jump_not_zero, std::ptrdiff_t{0xdead'beef}, source_offset });
 					jumps_.push_back(&instructions_.back());
 					break;
 					//any other characater is only a comment, therefore we ignore it
@@ -167,14 +168,12 @@ namespace bf {
 				else
 					MUST_NOT_BE_REACHED;
 
-			labels_.push_back(&instructions_.back() + 1); //one more label pointign at the past the end instruction
+			labels_.push_back(&instructions_.back() + 1); //one more label pointing at the past the end instruction
 			assert(labels_.size() == expected_label_count); //all precalculated capacity should have been filled
 
 			//there may be multiple labels on the same instruction with this code (two ']' in a row)
 			auto const unique_end = std::unique(labels_.begin(), labels_.end()); //remove multiple labels on the same instruction (may happen because of an empty loop)
-			labels_.resize(std::distance(labels_.begin(), unique_end)); //remove trailing elements
-
-
+			labels_.erase(unique_end, labels_.end()); //remove trailing elements
 		}
 
 		void resolve_jump_targets() const {
@@ -249,9 +248,9 @@ namespace bf {
 					std::vector(labels_[index], labels_[index + 1]))); //instructions 
 
 
-			assert(basic_blocks.size()); //otherwise the following loop would be infinite
+			assert(!basic_blocks.empty()); //otherwise the following loop would be infinite
 			for (std::size_t i = 0; i < basic_blocks.size() - 1; ++i)
-				switch (instruction& last_instruction = basic_blocks[i]->ops_.back(); last_instruction.op_code_) {
+				switch (instruction & last_instruction = basic_blocks[i]->ops_.back(); last_instruction.op_code_) {
 				case op_code::jump:
 				case op_code::jump_not_zero:
 
@@ -303,7 +302,7 @@ namespace bf {
 
 			*/
 
-			assert(syntax_validation_is_ok(code));
+			assert(is_syntactically_valid(code));
 
 			reset_compiler_state();
 
@@ -328,7 +327,7 @@ namespace bf {
 			bool do_compile(std::string code) { // takes code by value, because it is moved later
 				thread_local static compiler compiler;
 
-				if (syntax_validation_is_ok(code)) { //first perform quick scan for errors. If there are none, proceed with compilation
+				if (is_syntactically_valid(code)) { //first perform quick scan for errors. If there are none, proceed with compilation
 					auto code_blocks = compiler.compile(code);
 					assert(!code_blocks.empty()); //must be true, as the code had already undergone a syntax check
 					previous_compilation::prev_compilation_result = std::make_unique<compilation_result>(std::move(code), std::vector<syntax_error>{},
@@ -402,35 +401,30 @@ namespace bf {
 				assert(previous_compilation::ready() && !previous_compilation::successful()); //if there was no compilation or it completed ok, we have an error
 
 				if (std::size_t const error_count = previous_compilation::syntax_errors().size(); index >= error_count) {
-					std::cout << "Requested index " << index << " is out of bounds. Valid range is [0, " << error_count << ").\n";
-					return 5;
+					std::cerr << "Requested index " << index << " is out of bounds. Valid range is [0, " << error_count << ").\n";
+					return 5;	
 				}
 				syntax_error const& error = previous_compilation::syntax_errors()[index];
-				std::string source_code_line{ *utils::get_line(previous_compilation::source_code(), error.line_) };
-				std::replace(source_code_line.begin(), source_code_line.end(), '\t', ' '); //replace all tabs with spaces to prevent formatting errors
+				std::string source_code_line{ *utils::get_line(previous_compilation::source_code(), error.location_.line_) };
+				for (std::size_t i = 0; i < source_code_line.size(); ++i) //TODO comment this
+					if (source_code_line[i] == '\t')
+						source_code_line.replace(i, 1, cli::TAB_WIDTH, ' ');
 
-				std::cout << std::right << std::setw(5) << index << std::left << "  Syntax error: " << error.message_ << " at (" << error.line_ << ", " << error.char_offset_
-					<< ") {\n\t" << source_code_line << "\n\t" << std::string(error.char_offset_ - 1, ' ') << "^\n}\n";
+				std::cout << std::right << std::setw(5) << index << std::left << ". syntax error: " << error.message_
+					<< " at (" << error.location_.line_ << ", " << error.location_.column_
+					<< ") {\n\t" << source_code_line << "\n\t" << std::string(error.location_.column_ - 1, ' ') << "^\n}\n";
 				return 0;
 			}
 
 			/*Prints all syntax errors to stdout. If there had been no errors, does nothing.
 			if print_full is true, prints full information about all errors.*/
-			int print_syntax_errors(bool const print_full) {
+			int print_error_summary() {
 				assert(previous_compilation::ready() && !previous_compilation::successful()); //if there was no compilation or it completed ok, we have an error
-
-				if (print_full) {
-					for (std::size_t i = 0; i < previous_compilation::syntax_errors().size(); ++i)
-						print_error_detail(i);
-					return 0;
-				}
-				else {
-					int index = 0;
-					for (auto const& error : previous_compilation::syntax_errors())
-						std::cout << std::right << std::setw(5) << index++ << std::left << ". syntax error: "
-						<< error.message_ << " at (" << error.line_ << ", " << error.char_offset_ << ").\n";
-					return 0;
-				}
+				int index = 0;
+				for (auto const& error : previous_compilation::syntax_errors())
+					std::cout << std::right << std::setw(5) << index++ << std::left << ". syntax error: "
+					<< error.message_ << " at (" << error.location_.line_ << ", " << error.location_.column_ << ").\n";
+				return 0;
 			}
 
 		} //namespace bf::`anonymous`::namespace errors_callback_helper
@@ -452,9 +446,10 @@ namespace bf {
 			}
 
 			if (argv[1] == "all")
-				return helper::print_syntax_errors(false);
+				return helper::print_error_summary();
 			else if (argv[1] == "full")
-				return helper::print_syntax_errors(true);
+				for (std::size_t i = 0; i < previous_compilation::syntax_errors().size(); ++i)
+					helper::print_error_detail(i);
 			else if (argv[1] == "count") {
 				if (std::size_t const count = previous_compilation::syntax_errors().size(); count == 1u)
 					std::cout << "There has been one error.\n";
@@ -477,7 +472,7 @@ namespace bf {
 		ASSERT_IS_CALLED_ONLY_ONCE;
 		using namespace bf::cli;
 		add_command("compile", command_category::compilation, "Compiles given source code.",
-			"Usage: \"compile\" [\"code\" or \"file\"] argument\n"
+			"Usage: \"compile\" (\"code\" | \"file\") argument\n"
 			"argument is either string of characters interpreted as source code if \"code\" is specified\n"
 			"or a name of file containing the source code in case \"file\" is specified.\n"
 			"Additional information about the outcome of the compilation can be queried by commands from the \"compilation\" group."

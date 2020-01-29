@@ -13,6 +13,9 @@
 
 namespace bf::cli {
 
+	constexpr int TAB_WIDTH = 4;
+
+
 	//Categories of commands used for sorting. Used for example when printing help
 	enum class command_category {
 		general, //commands that do not fit anywhere else - quit, help

@@ -108,9 +108,10 @@ namespace bf::execution {
 		case op_code::load_const:
 			*cell_pointer_reg_ = static_cast<memory_cell_t>(instruction.argument_);
 			break;
+			//TODO add instruction like infinite, search etc
 		default: //die painfully
 			--executed_instructions_counter_;
-			std::cerr << "Unknown instruction " << instruction.op_code_ << " at offset " << instruction.source_offset_ << ". Halting.\n";
+			std::cerr << "Unknown instruction " << instruction.op_code_ << " at offset " << instruction.source_loc_ << ". Halting.\n";
 			halt() = true;
 		}
 

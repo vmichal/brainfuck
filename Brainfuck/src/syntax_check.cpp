@@ -8,11 +8,11 @@
 namespace bf {
 
 
-	bool operator<(syntax_error const& lhs, syntax_error const& rhs) noexcept {
-		return lhs.line_ != rhs.line_ ? lhs.line_ < rhs.line_ : lhs.char_offset_ < rhs.char_offset_;
+	bool operator<(source_location const& lhs, source_location const& rhs) noexcept {
+		return lhs.line_ != rhs.line_ ? lhs.line_ < rhs.line_ : lhs.column_ < rhs.column_;
 	}
 
-	bool syntax_validation_is_ok(std::string_view const source_code) {
+	bool is_syntactically_valid(std::string_view const source_code) {
 
 		//Has to perform a syntax check as fast as possible - only braces are counted, no additional information gets generated
 		int opened_loops = 0; //counter of opened loops
@@ -20,7 +20,7 @@ namespace bf {
 			if (character == '[')
 				++opened_loops; //a new loop is opened
 			else if (character == ']')
-				if (opened_loops > 0) //if we have some loops to close, close one
+				if (opened_loops) //if we have some loops to close, close one
 					--opened_loops;
 				else
 					return false; //Closing a loop when there isn't any opened is a syntax error
@@ -28,44 +28,51 @@ namespace bf {
 		return opened_loops == 0; //source code's syntax is ok if there are no opened loops left
 	}
 
+	static_assert(cli::TAB_WIDTH > 0 && (cli::TAB_WIDTH & (cli::TAB_WIDTH - 1)) == 0,
+		"::bf::cli::TAB_WIDTH must be a power of two for ::bf::syntax_validation_detailed'S implementation."); 
+
 
 	std::vector<syntax_error> syntax_validation_detailed(std::string_view const source_code) {
-		std::vector<syntax_error> syntax_errors; //found syntax errors. Is returned at the end of the function
-		std::deque<std::pair<int, int>> opened_loops; //deque used as a stack of pairs [line, character] == coordinates of the opening brace 
-		int line_number = 1, char_offset = 0; //coordinates start at [1,1] for the first char of source code
+		std::vector<syntax_error> syntax_errors; //found syntax errors
+		std::deque<source_location> opened_loops; //stack of coordinates of opening braces 
+		source_location current_loc{ 1,0 };
 
-		for (char const current_char : source_code) {//traverse each line char by char 
-			++char_offset;
-			switch (current_char) { //search for brackets 
-			case '\n':
-				++line_number; //move to the next line and reset char offset counter
-				char_offset = 0;
+		for (char const character : source_code) {//traverse whole source code char by char counting whitespaces and validating loops
+			++current_loc.column_;
+
+			switch (character) {
+			case '\n': current_loc = { current_loc.line_ + 1, 0 }; break;
+			case '\t': //tab == 8 spaces or less ('\t' aligns to a multiple of eight)
+				current_loc.column_ = (current_loc.column_ + ::bf::cli::TAB_WIDTH) & ~std::ptrdiff_t(::bf::cli::TAB_WIDTH - 1);
 				break;
 			case '[':
-				opened_loops.push_back({ line_number, char_offset }); //push current location onto the stack
+				opened_loops.push_back(current_loc); //push current location onto the stack
 				break;
 			case ']':
 				if (!opened_loops.empty()) //we are inside a loop => close it
 					opened_loops.pop_back();
 				else //no loops opened, generate an error message
-					syntax_errors.emplace_back("Unexpected token ']' without matching brace", line_number, char_offset);
+					syntax_errors.emplace_back("Unexpected token ']' not preceded by a matching '['", current_loc);
 				break;
 			}
 		}
 
-		syntax_errors.reserve(syntax_errors.size() + opened_loops.size()); //source code traversal finished => we now know how many syntax errors there are
-		auto const first_sequence_end = std::next(syntax_errors.begin(), syntax_errors.size()); //middle iterator for inplace merging (end of the first sorted range)
-		//TODO this ^^^^^^^^^^^^^^^^^^^^^^^^^ may be runtime error on debug confguration (MSVC)
+		if (opened_loops.empty()) //If there's no unclosed loop, we have found all errors and we can return early
+			return syntax_errors;
 
-		for (auto const [line, column] : opened_loops) //traverse the stack of opened loops FROM THE BEGINNING and generate error messages
-			syntax_errors.emplace_back("Unmatched token '[' without closing brace", line, column);
+		/*We know that there is exactly opened_loops.size() >= 1 more errors and both sequences are sorted by their source location.
+		Generate remaining syntax errors from unclosed loops and merge both sequences together. */
 
-		//sanity check that both sequences are sorted
-		assert(std::is_sorted(syntax_errors.begin(), first_sequence_end));
-		assert(std::is_sorted(first_sequence_end, syntax_errors.end()));
+		syntax_errors.reserve(syntax_errors.size() + opened_loops.size());
+		std::size_t const first_seq_length = syntax_errors.size();
 
-		//sort syntax errors by their location. Sort first by line, if lines match, sort by error offset. 
-		std::inplace_merge(syntax_errors.begin(), first_sequence_end, syntax_errors.end());
+		for (auto const& location : opened_loops) //traverse the stack of opened loops FROM THE BEGINNING and generate error messages
+			syntax_errors.emplace_back("Unmatched token '[' without matching closing brace ']'", location);
+
+		auto const middle_iterator = std::next(syntax_errors.begin(), first_seq_length);
+
+		std::inplace_merge(syntax_errors.begin(), middle_iterator, syntax_errors.end(),
+			[](auto const& a, auto const& b)-> bool {return a.location_ < b.location_; });
 
 		return syntax_errors;
 	}

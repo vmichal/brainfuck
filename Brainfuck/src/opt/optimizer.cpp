@@ -1,4 +1,4 @@
-#include "optimizer.h"
+#include "opt/optimizer_pass.h"
 #include "cli.h"
 #include "utils.h"
 #include "compiler.h"
@@ -27,12 +27,12 @@ namespace bf::opt {
 				continue;
 
 			if (block->empty())
-				file << '\t' << block->label_ << " [shape=box, label=\"Block " << block->label_ << ", EMPTY\"];\n";
+				file << '\t' << block->label_ << " [shape=box, label=\"Block " << block->label_ << "\\nEMPTY\"];\n";
 			else {
 
-				file << '\t' << block->label_ << " [shape=box,label=\"Block " << block->label_ << ", length " << block->ops_.size() << ".\\n";
+				file << '\t' << block->label_ << " [shape=box, label=\"Block " << block->label_ << ", length " << block->ops_.size() << ".\\n";
 				for (instruction const& i : block->ops_)
-					file << std::right << std::setw(6) << i.source_offset_ << ": " << std::left << std::setw(10) << i.op_code_
+					file << std::right << std::setw(6) << i.source_loc_ << ": " << std::left << std::setw(10) << i.op_code_
 					<< std::setw(10) << (i.is_jump() ? block->jump_successor_->label_ : i.argument_) << "\\n";
 
 				file << "\"];\n";
@@ -57,10 +57,7 @@ namespace bf::opt {
 	std::optional<opt_level_t> get_opt_by_name(std::string_view const optimization_name) {
 		using namespace std::string_view_literals;
 		static std::unordered_map<std::string_view, opt_level_t> const optimization_levels{
-			{"op_folding"sv, opt_level_t::op_folding},
-			{"dead_code_elimination"sv, opt_level_t::dead_code_elimination},
-			{"const_propagation"sv, opt_level_t::const_propagation},
-			{"loop_analysis"sv, opt_level_t::loop_analysis}
+
 		};
 
 		if (optimization_levels.count(optimization_name) == 0) {
@@ -72,44 +69,7 @@ namespace bf::opt {
 
 
 
-	void assert_program_invariants(std::vector<basic_block*> const& program) {
-		//Assert that there are no references to the to be deleted blocks
-		for (basic_block* const block : program) {
-			assert(block);
-			assert(block->jump_successor_ == nullptr || (!block->jump_successor_->is_orphaned() && block->jump_successor_->predecessors_.count(block) == 1));
-			assert(block->natural_successor_ == nullptr || (!block->natural_successor_->is_orphaned() && block->natural_successor_->predecessors_.count(block) == 1));
-			assert(block->is_cjump() == block->is_pure_cjump());
-			assert(std::none_of(block->predecessors_.begin(), block->predecessors_.end(), std::mem_fn(&basic_block::is_orphaned)));
-
-			assert(block->jump_successor_ != block->natural_successor_ || block->jump_successor_ == nullptr);
-
-			for (basic_block const* const predecessor : block->predecessors_) {
-				assert(predecessor->has_successor(block));
-
-			}
-
-			for (auto successor : basic_block::successor_ptrs) {
-				assert(block->*successor == nullptr || (block->*successor)->has_predecessor(block));
-			}
-
-			for ([[maybe_unused]] instruction const& inst : block->ops_) {
-			}
-		};
-
-		assert(std::is_sorted(program.begin(), program.end(), basic_block::ptr_comparator{}));
-	}
-
-	/*Erases all blocks that have no predecessors. It is expected that said blocks are no longer referenced from any other blocks.*/
-	std::ptrdiff_t erase_orphaned_blocks(std::vector<basic_block*>& program) {
-		assert_program_invariants(program);
-
-		auto const old_end = program.end();
-		auto const new_end = std::remove_if(program.begin(), old_end, std::mem_fn(&basic_block::is_orphaned));
-
-		program.erase(new_end, old_end);
-
-		return std::distance(new_end, old_end);
-	}
+	
 
 
 
@@ -165,37 +125,6 @@ namespace bf::opt {
 //		std::cout << "Folding finished, " << fold_count << " fold" << utils::print_plural(fold_count) << " performed.\n";
 		//}
 
-		for (int i = 0; i < 10; ++i) {
-
-			std::string round = std::to_string(i) + '.';
-
-			generate_dot_file(block_ptrs, round + "1.dot");
-			peephole::simplify_arithmetic<peephole::arithmetic_tag::value>(block_ptrs);
-			peephole::simplify_arithmetic<peephole::arithmetic_tag::pointer>(block_ptrs);
-			peephole::simplify_arithmetic<peephole::arithmetic_tag::both>(block_ptrs);
-
-
-			generate_dot_file(block_ptrs, round + "2.dot");
-			peephole::eliminate_clear_loops(block_ptrs);
-			generate_dot_file(block_ptrs, round + "3.dot");
-			peephole::propagate_local_const(block_ptrs);
-			generate_dot_file(block_ptrs, round + "4.dot");
-			global::eliminate_pure_uncond_jumps(block_ptrs);
-			generate_dot_file(block_ptrs, round + "5.dot");
-			peephole::eliminate_infinite_loops(block_ptrs);
-			generate_dot_file(block_ptrs, round + "6.dot");
-			global::optimize_cond_jump_destination(block_ptrs);
-			generate_dot_file(block_ptrs, round + "7.dot");
-			global::eliminate_single_entry_conditionals(block_ptrs);
-			generate_dot_file(block_ptrs, round + "8.dot");
-			global::delete_unreachable_blocks(block_ptrs);
-			generate_dot_file(block_ptrs, round + "9.dot");
-			global::merge_into_predecessor(block_ptrs);
-			generate_dot_file(block_ptrs, round + "10.dot");
-
-
-
-		}
 		//TODO opportunity to add other optimizations;
 
 		std::cout << "Optimizations ended.\n";

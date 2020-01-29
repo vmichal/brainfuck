@@ -90,7 +90,8 @@ namespace bf::utils {
 	struct ranges_iterator {
 	private:
 
-		Iter begin_, end_;
+		Iter begin_;
+		Iter const end_;
 		Pred pred_;
 
 		struct sentinel_t {};
@@ -98,17 +99,18 @@ namespace bf::utils {
 	public:
 
 		ranges_iterator(Iter const begin, Iter const end, Pred pred)
-			: begin_{}, end_{ end }, pred_{ pred } {
+			: end_{ end }, pred_{ std::move(pred) } {
 			begin_ = std::find_if(begin, end, pred);
 		}
 
 		std::pair<Iter, Iter> operator*() {
 			assert(pred_(*begin_));
 
-			std::pair<Iter, Iter> result{ begin_, std::find_if_not(begin_, end_, pred_) };
+			auto const beg = begin_;
+			auto const end = std::find_if_not(begin_, end_, pred_);
 
-			begin_ = std::find_if(result.second, end_, pred_);
-			return result;
+			begin_ = std::find_if(end, end_, pred_);
+			return { beg, end };
 		}
 
 		void operator++() {}

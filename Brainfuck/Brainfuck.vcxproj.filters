@@ -21,9 +21,6 @@
     <ClCompile Include="src\cli.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\optimizer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\syntax_check.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -48,21 +45,30 @@
     <ClCompile Include="src\utils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\opt_peephole.cpp">
+    <ClCompile Include="src\opt\optimizer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\opt_global.cpp">
+    <ClCompile Include="src\opt\inner_loops.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\analysis.cpp">
+    <ClCompile Include="src\anal\analysis.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\opt\arithmetic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\opt\branches.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\opt\cleanup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\IR\instruction.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="inc\cli.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="inc\optimizer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="inc\syntax_check.h">
@@ -86,10 +92,37 @@
     <ClInclude Include="inc\utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="inc\analysis.h">
+    <ClInclude Include="inc\opt\optimizer_pass.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="inc\optimizer_pass.h">
+    <ClInclude Include="inc\opt\inner_loops.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\anal\analysis.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\opt\arithmetic.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\opt\branches.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\opt\cleanup.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\IR\instruction.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\IR\inst_types.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\source_location.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\IR\basic_block.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\IR\program.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

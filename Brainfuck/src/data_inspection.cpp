@@ -13,6 +13,8 @@
 #include <cassert>
 #include <charconv>
 
+//TODO due to possibility of unaligned memory inspection, either force reads be memory-alined, or use packed struct
+
 namespace bf::data_inspection {
 
 	namespace {
